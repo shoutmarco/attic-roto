@@ -23,9 +23,8 @@
  *   lcd_fill(x,y,w,h,col), draw_line in gfx.c, cv_text, AF_S.
  * No new drawing dependencies introduced. */
 
-#include "core.h"       /* NTRK, track_t, etc. */
-#include "roto_seq.h"
-#include <stdint.h>
+#include "roto_seq.h"   /* roto_seq_t, roto, ROTO_TRACKS, ROTO_STEPS */
+/* core.h and stdint.h are already in scope via the unity build in felucca.c */
 
 /* ---------------------------------------------------------------- palette */
 #define RGB565(r,g,b) ((uint16_t)(((r)&0xF8u)<<8u|(((g)&0xFCu)<<3u)|((b)>>3u)))
