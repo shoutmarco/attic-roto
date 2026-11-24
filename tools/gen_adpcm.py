@@ -165,7 +165,7 @@ def main():
     for i in range(0, len(data), 18):
         out.append("    " + " ".join(f"0x{v:02X}," for v in data[i:i + 18]))
     out += ["};", "#endif", ""]
-    Path(sys.argv[1]).write_text("\n".join(out), newline="\n")   # (the same bytes on every OS)
+    Path(sys.argv[1]).write_text("\n".join(out))   # newline kwarg needs Python 3.10+; omit for 3.9 compat
     print(f"adpcm: {len(rows)} waves, {len(PRESETS)} presets, {len(data)} B -> {sys.argv[1]}")
 
 
