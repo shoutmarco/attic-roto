@@ -342,11 +342,12 @@ int roto_ui_input(uint32_t pressed, uint32_t notes)
 
 /* ---------------------------------------------------------- draw dispatch */
 /* Called from ui_draw_page() once per frame. */
-void roto_ui_draw(void)
+int roto_ui_draw(void)
 {
-    if (roto_in_editor) return;   /* Felucca draws its own editor pages */
+    if (roto_in_editor) return 0;   /* let Felucca draw its own editor pages */
     if (roto_screen == ROTO_SCR_HOME)
         draw_home_screen();
     else
         draw_ring_screen();
+    return 1;   /* we drew the full screen; caller must skip Felucca drawing */
 }

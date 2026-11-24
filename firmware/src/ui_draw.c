@@ -1626,7 +1626,7 @@ static void ui_draw(void)
 }
 static void ui_draw_page(uint32_t counting)
 {
-    roto_ui_draw();                                       /* attic-roto: ring sequencer / home screen */
+    if (roto_ui_draw()) return;                           /* attic-roto: drew full screen, skip Felucca drawing */
     if (ui.uboot) {
         draw_uboot();
         draw_head();
