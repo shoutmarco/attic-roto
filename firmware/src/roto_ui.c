@@ -52,14 +52,15 @@ static uint8_t roto_screen    = ROTO_SCR_HOME;
 static uint8_t roto_in_editor = 0;   /* 1 = pass input to Felucca's voice editor */
 
 /* ---------------------------------------------------------------- geometry */
-/* FM-1 LCD is 240 × 135 px (landscape).  Centre the ring in the available square. */
+/* FM-1 LCD is 240 × 240 px (square).  CV_MAX = 240x124, so we draw
+ * content in the top 124 rows and lcd_fill covers the rest. */
 #define SCR_W 240
-#define SCR_H 135
+#define SCR_H 240
 #define CX    (SCR_W / 2)   /* 120 */
-#define CY    (SCR_H / 2)   /*  67 */
+#define CY    (SCR_H / 2)   /* 120 */
 
 /* Ring display radius for the full-screen ring view */
-#define RING_R_FULL 55
+#define RING_R_FULL 90
 
 /* -------------------------------------------------------- integer maths */
 /* Fixed-point sine / cosine: enough for dot placement on a circle.
@@ -343,16 +344,24 @@ int roto_ui_input(uint32_t pressed, uint32_t notes)
 
 /* ---------------------------------------------------------- draw dispatch */
 /* Called from ui_draw_page() once per frame. */
+/* LCD is 240x240. CV_MAX = 240x124, so cv_begin clamps at 124 rows.
+ * We cover the full screen: lcd_fill clears all 240 rows first, then
+ * cv_begin/cv_blit handles the top 124 rows with our content. */
+#define ROTO_LCD_W  240u
+#define ROTO_LCD_H  240u
+#define ROTO_CV_H   124u   /* CV_MAX / 240 */
+
 int roto_ui_draw(void)
 {
     if (roto_in_editor) return 0;   /* let Felucca draw its own editor pages */
-    /* Use Felucca's cv_px[] framebuffer so our drawing goes through the same
-     * blit path and never races with Felucca's own lcd_fill / lcd_blit calls. */
-    cv_begin(SCR_W, SCR_H, COL_BG);   /* clear canvas to black */
+    /* 1. Black out the entire 240x240 LCD */
+    lcd_fill(0, 0, ROTO_LCD_W, ROTO_LCD_H, COL_BG);
+    /* 2. Draw our content into the cv_px[] framebuffer (top 124 rows) */
+    cv_begin(ROTO_LCD_W, ROTO_CV_H, COL_BG);
     if (roto_screen == ROTO_SCR_HOME)
         draw_home_screen();
     else
         draw_ring_screen();
-    cv_blit(0, 0);   /* push the full 240×135 canvas to the LCD */
-    return 1;   /* we drew the full screen; caller must skip Felucca drawing */
+    cv_blit(0, 0);   /* push 240x124 canvas to LCD at y=0 */
+    return 1;   /* we drew the full screen; caller skips Felucca drawing */
 }
