@@ -9,7 +9,6 @@
  * pi32v2). The playhead (pos) and acc are audio-task-owned; the UI reads
  * pos for display only. */
 #include "roto_seq.h"
-#include <string.h>
 
 roto_seq_t roto;
 
@@ -17,7 +16,12 @@ roto_seq_t roto;
 void roto_seq_init(void)
 {
     uint32_t t, s;
-    memset(&roto, 0, sizeof roto);
+    /* zero the struct without memset (JieLi toolchain has no string.h) */
+    {
+        uint8_t *p = (uint8_t *)&roto;
+        uint32_t n = (uint32_t)sizeof roto;
+        while (n--) *p++ = 0;
+    }
     roto.bpm     = 120;
     roto.running = 0;
     roto.sel     = 0;
