@@ -354,14 +354,16 @@ int roto_ui_input(uint32_t pressed, uint32_t notes)
 int roto_ui_draw(void)
 {
     if (roto_in_editor) return 0;   /* let Felucca draw its own editor pages */
-    /* 1. Black out the entire 240x240 LCD */
-    lcd_fill(0, 0, ROTO_LCD_W, ROTO_LCD_H, COL_BG);
-    /* 2. Draw our content into the cv_px[] framebuffer (top 124 rows) */
-    cv_begin(ROTO_LCD_W, ROTO_CV_H, COL_BG);
+    /* LCD is 240x240. CV_MAX = 240x124, so we blit in two passes:
+     * pass 1: rows 0..123  — our content (home or ring screen)
+     * pass 2: rows 124..239 — solid black (the bottom of the screen) */
+    cv_begin(ROTO_LCD_W, ROTO_CV_H, COL_BG);   /* clears top strip to black */
     if (roto_screen == ROTO_SCR_HOME)
         draw_home_screen();
     else
         draw_ring_screen();
-    cv_blit(0, 0);   /* push 240x124 canvas to LCD at y=0 */
+    cv_blit(0, 0);                              /* push top 124 rows */
+    cv_begin(ROTO_LCD_W, ROTO_CV_H, COL_BG);   /* clear bottom strip to black */
+    cv_blit(0, ROTO_CV_H);                      /* push rows 124..247 (clipped to 240) */
     return 1;   /* we drew the full screen; caller skips Felucca drawing */
 }
