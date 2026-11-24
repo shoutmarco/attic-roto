@@ -89,10 +89,11 @@ static void ring_dot(int32_t r, uint32_t step, uint32_t nsteps, int32_t *ox, int
 }
 
 /* ---------------------------------------------------------- draw primitives */
+/* All drawing goes through cv_px[] (gfx.c's framebuffer) so we share the
+ * same blit path as Felucca. cv_begin / cv_blit are called in roto_ui_draw(). */
 static void roto_pixel(int32_t x, int32_t y, uint16_t c)
 {
-    if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
-    lcd_fill((uint32_t)x, (uint32_t)y, 1u, 1u, c);
+    cv_pset(x, y, c);   /* bounds-checked inside cv_pset */
 }
 
 /* Bresenham line */
@@ -145,7 +146,7 @@ static void draw_ring_screen(void)
     uint32_t s;
     int32_t r = RING_R_FULL;
 
-    lcd_fill(0, 0, SCR_W, SCR_H, COL_BG);
+    /* background cleared by cv_begin() in roto_ui_draw() */
 
     /* the ring */
     roto_ring(CX, CY, r, col);
@@ -182,8 +183,8 @@ static void draw_ring_screen(void)
         uint32_t t;
         for (t = 0; t < ROTO_TRACKS; t++) {
             uint16_t ic = (t == sel) ? TRK_COL[t] : TRK_DIM[t];
-            uint32_t bx = (uint32_t)SCR_W - 28u + t * 7u;
-            lcd_fill(bx, (uint32_t)SCR_H - 10u, 5u, 5u, ic);
+            int32_t bx = (int32_t)((uint32_t)SCR_W - 28u + t * 7u);
+            cv_rect(bx, (int32_t)SCR_H - 10, 5, 5, ic);
         }
     }
 }
@@ -218,7 +219,7 @@ static void draw_home_screen(void)
     uint32_t i;
     int32_t px[12], py[12];
 
-    lcd_fill(0, 0, SCR_W, SCR_H, COL_BG);
+    /* background cleared by cv_begin() in roto_ui_draw() */
 
     int32_t ca = icos((int32_t)ico_angle);
     int32_t sa = isin((int32_t)ico_angle);
@@ -259,8 +260,8 @@ static void draw_home_screen(void)
         uint32_t t;
         for (t = 0; t < ROTO_TRACKS; t++) {
             uint16_t ic = ((uint32_t)roto.sel == t) ? TRK_COL[t] : TRK_DIM[t];
-            uint32_t bx = (uint32_t)CX - 14u + t * 9u;
-            lcd_fill(bx, (uint32_t)SCR_H - 24u, 7u, 7u, ic);
+            int32_t bx = (int32_t)((uint32_t)CX - 14u + t * 9u);
+            cv_rect(bx, (int32_t)SCR_H - 24, 7, 7, ic);
         }
     }
 
@@ -345,9 +346,13 @@ int roto_ui_input(uint32_t pressed, uint32_t notes)
 int roto_ui_draw(void)
 {
     if (roto_in_editor) return 0;   /* let Felucca draw its own editor pages */
+    /* Use Felucca's cv_px[] framebuffer so our drawing goes through the same
+     * blit path and never races with Felucca's own lcd_fill / lcd_blit calls. */
+    cv_begin(SCR_W, SCR_H, COL_BG);   /* clear canvas to black */
     if (roto_screen == ROTO_SCR_HOME)
         draw_home_screen();
     else
         draw_ring_screen();
+    cv_blit(0, 0);   /* push the full 240×135 canvas to the LCD */
     return 1;   /* we drew the full screen; caller must skip Felucca drawing */
 }

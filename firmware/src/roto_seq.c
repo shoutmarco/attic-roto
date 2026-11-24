@@ -31,20 +31,7 @@ void roto_seq_init(void)
             k->step[s].note = 0;
         }
     }
-    /* seed a default pattern so the instrument is never silent at boot:
-     * track 0 kick on the quarters, track 1 snare on 2 and 4,
-     * track 2 hats on the off-beats, track 3 a simple bass line */
-    for (s = 0; s < 16; s++) {
-        roto.trk[0].step[s].on = (s % 4 == 0);
-        roto.trk[1].step[s].on = (s % 8 == 4);
-        roto.trk[2].step[s].on = (s % 2 == 1);
-        roto.trk[3].step[s].on = (s % 3 == 0);
-    }
-    roto.trk[3].step[0].note  = 0;
-    roto.trk[3].step[3].note  = 7;
-    roto.trk[3].step[6].note  = 5;
-    roto.trk[3].step[9].note  = 3;
-    roto.trk[3].step[12].note = 7;
+    /* all steps off at boot — silent until the user programs a pattern */
 }
 
 /* --------------------------------------------------------------- tick */
