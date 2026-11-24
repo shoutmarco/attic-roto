@@ -48,7 +48,7 @@ static const uint16_t TRK_DIM[ROTO_TRACKS] = {
 
 /* ---------------------------------------------------------------- screen state */
 enum { ROTO_SCR_HOME = 0, ROTO_SCR_RING };
-static uint8_t roto_screen    = ROTO_SCR_HOME;
+static uint8_t roto_screen    = ROTO_SCR_RING;   /* boot into ring sequencer */
 static uint8_t roto_in_editor = 0;   /* 1 = pass input to Felucca's voice editor */
 
 /* ---------------------------------------------------------------- geometry */
@@ -90,11 +90,13 @@ static void ring_dot(int32_t r, uint32_t step, uint32_t nsteps, int32_t *ox, int
 }
 
 /* ---------------------------------------------------------- draw primitives */
-/* All drawing goes through cv_px[] (gfx.c's framebuffer) so we share the
- * same blit path as Felucca. cv_begin / cv_blit are called in roto_ui_draw(). */
+/* attic-roto draws directly to the LCD via lcd_fill(x,y,1,1,c).
+ * We do NOT use cv_px[]: CV_MAX = 240x124, only covers half the 240x240 panel.
+ * roto_ui_draw() clears the screen with lcd_fill then draws here. No cv_blit. */
 static void roto_pixel(int32_t x, int32_t y, uint16_t c)
 {
-    cv_pset(x, y, c);   /* bounds-checked inside cv_pset */
+    if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
+    lcd_fill((uint32_t)x, (uint32_t)y, 1u, 1u, c);
 }
 
 /* Bresenham line */
@@ -199,14 +201,12 @@ static void draw_ring_screen(void)
             /* small diamond on the ring */
             roto_diamond(sx, sy, 2, mc);
 
-            /* note label just outside the ring for active steps */
+            /* active steps: extra outer dot as a visual marker */
             if (is_on) {
-                /* position label radially outward by 10 px */
                 int32_t a = (int32_t)((s * 256u) / (uint32_t)k->len + 192u) & 255;
-                int32_t lx = CX + (icos(a) * (R + 10)) / 256 - 4;
-                int32_t ly = CY + (isin(a) * (R + 10)) / 256 - 4;
-                uint8_t note = k->step[s].note % 12u;
-                cv_text(lx, ly, &AF_S, NOTE_NAME[note], col);
+                int32_t ox = CX + (icos(a) * (R + 8)) / 256;
+                int32_t oy = CY + (isin(a) * (R + 8)) / 256;
+                roto_pixel(ox, oy, col);
             }
         }
     }
@@ -221,20 +221,14 @@ static void draw_ring_screen(void)
         roto_diamond(px, py, 5, COL_WHITE);
     }
 
-    /* track label top-left */
+    /* track indicator: 4 small diamonds bottom-centre, one per track */
     {
-        char buf[3] = {'T', (char)('1' + (char)sel), 0};
-        cv_text(6, 6, &AF_S, buf, col);
-    }
-
-    /* step count top-right */
-    {
-        char buf[5];
-        uint8_t l = k->len;
-        buf[0] = (char)('0' + l / 10);
-        buf[1] = (char)('0' + l % 10);
-        buf[2] = 'S'; buf[3] = 0;
-        cv_text((int32_t)SCR_W - 24, 6, &AF_S, buf, dim);
+        uint32_t t;
+        for (t = 0; t < ROTO_TRACKS; t++) {
+            uint16_t ic = (t == sel) ? TRK_COL[t] : TRK_DIM[t];
+            int32_t bx = CX - 18 + (int32_t)(t * 12u);
+            roto_diamond(bx, SCR_H - 12, 3, ic);
+        }
     }
 }
 
@@ -402,16 +396,12 @@ int roto_ui_input(uint32_t pressed, uint32_t notes)
 int roto_ui_draw(void)
 {
     if (roto_in_editor) return 0;   /* let Felucca draw its own editor pages */
-    /* LCD is 240x240. CV_MAX = 240x124, so we blit in two passes:
-     * pass 1: rows 0..123  — our content (home or ring screen)
-     * pass 2: rows 124..239 — solid black (the bottom of the screen) */
-    cv_begin(ROTO_LCD_W, ROTO_CV_H, COL_BG);   /* clears top strip to black */
+    /* Clear the full 240x240 LCD to black, then draw directly via lcd_fill.
+     * We do NOT use cv_px[]/cv_blit: CV_MAX only covers 240x124 rows. */
+    lcd_fill(0u, 0u, ROTO_LCD_W, ROTO_LCD_H, COL_BG);
     if (roto_screen == ROTO_SCR_HOME)
         draw_home_screen();
     else
         draw_ring_screen();
-    cv_blit(0, 0);                              /* push top 124 rows */
-    cv_begin(ROTO_LCD_W, ROTO_CV_H, COL_BG);   /* clear bottom strip to black */
-    cv_blit(0, ROTO_CV_H);                      /* push rows 124..247 (clipped to 240) */
     return 1;   /* we drew the full screen; caller skips Felucca drawing */
 }
