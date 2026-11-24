@@ -26,7 +26,6 @@
 #include "core.h"       /* NTRK, track_t, etc. */
 #include "roto_seq.h"
 #include <stdint.h>
-#include <string.h>
 
 /* ---------------------------------------------------------------- palette */
 #define RGB565(r,g,b) ((uint16_t)(((r)&0xF8u)<<8u|(((g)&0xFCu)<<3u)|((b)>>3u)))

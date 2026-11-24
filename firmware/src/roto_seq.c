@@ -9,7 +9,6 @@
  * pi32v2). The playhead (pos) and acc are audio-task-owned; the UI reads
  * pos for display only. */
 #include "roto_seq.h"
-#include <string.h>
 
 roto_seq_t roto;
 
