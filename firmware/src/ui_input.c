@@ -1549,33 +1549,28 @@ static void ui_input(void)
 {
     uint32_t pressed = fm1_input_edges(0), notes = fm1_input_note_edges(), now = fm1_ticks(), id, b, k;
 
-    /* attic-roto: consume K1-K4 for sequencer controls at all times.
-     * K1 = BPM (+/-), K2 = active track (wraps 0..3),
-     * K3 = step length for active track, K4 = clock div (1/2/4). */
+    /* attic-roto: the ring sequencer's controls, at all times.
+     * K1 LENGTH, K2 FILL, K3 ROTATE, K4 RATE (the ring on screen);
+     * SELECT the tempo, ALGO the ring on screen (PRESET does nothing here). */
     {
-        int32_t v;
-        if ((v = panel_enc(EN_K1)) != 0) {
-            int32_t bpm = (int32_t)roto.bpm + v;
-            if (bpm <  40) bpm =  40;
-            if (bpm > 240) bpm = 240;
+        int32_t v, i;
+        uint32_t sel2 = (uint32_t)roto.sel;
+        if ((v = panel_enc(EN_K1)) != 0)
+            roto_len_set(sel2, (uint32_t)clamp((int32_t)roto.trk[sel2].len + v, 1, ROTO_STEPS));
+        if ((v = panel_enc(EN_K2)) != 0)
+            for (i = 0; i < (v < 0 ? -v : v); i++) roto_fill(sel2, v);
+        if ((v = panel_enc(EN_K3)) != 0)
+            for (i = 0; i < (v < 0 ? -v : v); i++) roto_rotate(sel2, v);
+        if ((v = panel_enc(EN_K4)) != 0)
+            roto.trk[sel2].div = (uint8_t)clamp((int32_t)roto.trk[sel2].div + v, 1, 4);
+        if ((v = panel_enc(EN_SELECT)) != 0) {
+            int32_t bpm = clamp((int32_t)roto.bpm + v, 40, 240);
             roto.bpm = (uint8_t)bpm;
             song.g[G_BPM] = (int16_t)bpm;              /* (the delay follows the tempo) */
         }
-        if ((v = panel_enc(EN_K2)) != 0) {
-            int32_t sel2 = ((int32_t)roto.sel + v + ROTO_TRACKS) % ROTO_TRACKS;
-            roto.sel = (uint8_t)sel2;
-        }
-        if ((v = panel_enc(EN_K3)) != 0) {
-            uint32_t sel2 = (uint32_t)roto.sel;
-            roto_len_set(sel2, (uint32_t)((int32_t)roto.trk[sel2].len + v));
-        }
-        if ((v = panel_enc(EN_K4)) != 0) {
-            uint32_t sel2 = (uint32_t)roto.sel;
-            int32_t d = (int32_t)roto.trk[sel2].div + v;
-            if (d < 1) d = 1;
-            if (d > 4) d = 4;
-            roto.trk[sel2].div = (uint8_t)d;
-        }
+        if ((v = panel_enc(EN_ALGO)) != 0)
+            roto.sel = (uint8_t)(((int32_t)roto.sel + v % ROTO_TRACKS + ROTO_TRACKS) % ROTO_TRACKS);
+        panel_enc(EN_PRESET);                          /* (taken, so a turn here never loads a sound later) */
     }
 
     /* attic-roto: transport buttons */

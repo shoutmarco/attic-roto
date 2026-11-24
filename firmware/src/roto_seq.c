@@ -122,7 +122,7 @@ void roto_seq_generate(uint32_t seed)
     /* 1: drums, 16 steps. Kick on the beats (sometimes the last one pushed),
      * off-beat open hats, a stray rim or clap, a few closed hats. */
     k = &roto.trk[0];
-    k->len = 16; k->div = 1; k->gate = 25;
+    k->len = 16; k->div = 1; k->gate = 25; k->fill_note = 42;   /* (FILL adds closed hats) */
     for (s = 0; s < 16u; s += 4u) put(k, s, 36, s ? 104u + rnd(12u) : 118u);
     if (chance(30)) { k->step[12].on = 0; put(k, chance(50) ? 11u : 14u, 36, 100); }
     for (s = 2; s < 16u; s += 4u) if (!k->step[s].on && chance(65)) put(k, s, 46, 62u + rnd(28u));
@@ -148,6 +148,7 @@ void roto_seq_generate(uint32_t seed)
     k->len = L_BASS[rnd(4u)]; k->div = 1; k->gate = 55;
     base = 36u + pc;
     if (pc >= 7u) base -= 12u;
+    k->fill_note = (uint8_t)base;
     n = 5u + rnd(3u);
     for (i = 0; i < n; i++) {
         uint32_t r = rnd(100u), note;
@@ -162,6 +163,7 @@ void roto_seq_generate(uint32_t seed)
     k = &roto.trk[2];
     k->len = L_STAB[rnd(5u)]; k->div = (uint8_t)(chance(40) ? 2u : 1u); k->gate = 30;
     k->chord[0] = 3; k->chord[1] = 7; k->chord[2] = 10;
+    k->fill_note = (uint8_t)(48u + pc);
     n = 2u + rnd(2u);
     base = rnd(k->len);                                          /* spread round the ring, a little uneven */
     for (i = 0; i < n; i++) {
@@ -176,6 +178,7 @@ void roto_seq_generate(uint32_t seed)
     /* 4: blips, minor pentatonic up high, sparse. */
     k = &roto.trk[3];
     k->len = L_BLIP[rnd(4u)]; k->div = (uint8_t)(chance(50) ? 2u : 1u); k->gate = 25;
+    k->fill_note = (uint8_t)(60u + pc);
     n = 2u + rnd(2u);
     base = rnd(k->len);
     for (i = 0; i < n; i++) {
@@ -257,6 +260,7 @@ void roto_step_toggle(uint32_t trk, uint32_t step)
         st->vel = 100;
     }
     st->on ^= 1u;
+    st->fill = 0;                                   /* (a step set by hand belongs to the pattern) */
 }
 
 void roto_len_set(uint32_t trk, uint32_t len)
@@ -267,6 +271,107 @@ void roto_len_set(uint32_t trk, uint32_t len)
     roto.trk[trk].len = (uint8_t)len;
     if (roto.trk[trk].pos != ROTO_POS_START && roto.trk[trk].pos >= len)
         roto.trk[trk].pos = 0;
+}
+
+/* FILL: one hit more goes in the middle of the biggest gap (the note of the hit
+ * before it; a drum ring adds closed hats); one hit fewer first takes away what
+ * FILL added, newest first (so turning back undoes it), then the most crowded
+ * hit (the smallest gaps either side), so the rest stays even. */
+static uint32_t ring_hits(const roto_track_t *k)
+{
+    uint32_t s, n = 0;
+    for (s = 0; s < k->len; s++) n += k->step[s].on;
+    return n;
+}
+
+/* steps from hit s to the next hit, going round (len if s is the only one) */
+static uint32_t gap_after(const roto_track_t *k, uint32_t s)
+{
+    uint32_t d;
+    for (d = 1; d < k->len; d++)
+        if (k->step[(s + d) % k->len].on) return d;
+    return k->len;
+}
+
+static uint32_t gap_before(const roto_track_t *k, uint32_t s)
+{
+    uint32_t d;
+    for (d = 1; d < k->len; d++)
+        if (k->step[(s + k->len - d) % k->len].on) return d;
+    return k->len;
+}
+
+void roto_fill(uint32_t trk, int32_t dir)
+{
+    roto_track_t *k;
+    uint32_t s, n, best = 0, bestv = 0;
+    if (trk >= ROTO_TRACKS || !dir) return;
+    k = &roto.trk[trk];
+    n = ring_hits(k);
+    if (dir > 0) {
+        roto_step_t *st;
+        if (n >= k->len) return;
+        if (!n) {
+            best = 0;
+            bestv = 0;
+        } else {
+            for (s = 0; s < k->len; s++) {           /* the biggest gap (the first, on a tie) */
+                uint32_t g;
+                if (!k->step[s].on) continue;
+                g = gap_after(k, s);
+                if (g > bestv) { bestv = g; best = s; }
+            }
+        }
+        st = &k->step[n ? (best + bestv / 2u) % k->len : 0u];
+        if (!n || roto.snd[trk].eng == 10u)          /* (engines.c: 10 = DRUM) */
+            st->note = k->fill_note ? k->fill_note : 60u;
+        else
+            st->note = k->step[best].note;
+        st->vel = n && roto.snd[trk].eng != 10u ? k->step[best].vel : 64u;
+        if (k->fill_seq < 255u) k->fill_seq++;
+        st->fill = k->fill_seq;
+        st->on = 1;
+    } else {
+        uint32_t newest = 0;
+        if (!n) return;
+        for (s = 0; s < k->len; s++)                 /* what FILL added goes first, newest first */
+            if (k->step[s].on && k->step[s].fill > newest) { newest = k->step[s].fill; best = s; }
+        if (newest) {
+            k->step[best].on = 0;
+            k->step[best].fill = 0;
+            if (newest == k->fill_seq) k->fill_seq--;
+            return;
+        }
+        bestv = 0xFFFFFFFFu;
+        for (s = 0; s < k->len; s++) {               /* the most crowded hit (the last, on a tie) */
+            uint32_t c;
+            if (!k->step[s].on) continue;
+            c = gap_before(k, s) + gap_after(k, s);
+            if (c <= bestv) { bestv = c; best = s; }
+        }
+        k->step[best].on = 0;
+    }
+}
+
+/* ROTATE: every step of the ring moves one step later (dir > 0) or earlier */
+void roto_rotate(uint32_t trk, int32_t dir)
+{
+    roto_track_t *k;
+    roto_step_t keep;
+    uint32_t s, len;
+    if (trk >= ROTO_TRACKS || !dir) return;
+    k = &roto.trk[trk];
+    len = k->len;
+    if (len < 2u) return;
+    if (dir > 0) {
+        keep = k->step[len - 1u];
+        for (s = len - 1u; s > 0u; s--) k->step[s] = k->step[s - 1u];
+        k->step[0] = keep;
+    } else {
+        keep = k->step[0];
+        for (s = 0; s + 1u < len; s++) k->step[s] = k->step[s + 1u];
+        k->step[len - 1u] = keep;
+    }
 }
 
 /* ------------------------------------------------------------- transport */

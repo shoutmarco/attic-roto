@@ -22,6 +22,7 @@ typedef struct {
     uint8_t on;
     uint8_t note;   /* MIDI note 0..127 */
     uint8_t vel;    /* 1..127 */
+    uint8_t fill;   /* 0: part of the pattern; n: the n-th hit FILL added (taken away first, newest first) */
 } roto_step_t;
 
 typedef struct {
@@ -35,6 +36,8 @@ typedef struct {
     uint8_t  held[1 + ROTO_CHORD];
     uint32_t acc;        /* samples into the current step */
     uint32_t gate_left;  /* samples until the held notes are released */
+    uint8_t  fill_note;  /* the note FILL adds when the ring has no hits to copy */
+    uint8_t  fill_seq;   /* FILL's counter for the hits it adds */
 } roto_track_t;
 
 /* the sound a track gets at power-on (applied by main.c roto_boot_sounds) */
@@ -70,6 +73,8 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate);
 /* editing (UI side) */
 void roto_step_toggle(uint32_t trk, uint32_t step);
 void roto_len_set(uint32_t trk, uint32_t len);
+void roto_fill(uint32_t trk, int32_t dir);     /* one hit more (dir > 0) or fewer, spread evenly, notes kept */
+void roto_rotate(uint32_t trk, int32_t dir);   /* spin the pattern one step later (dir > 0) or earlier */
 
 /* transport (UI side; the audio side releases notes after a stop) */
 void roto_play(void);
