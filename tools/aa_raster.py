@@ -46,6 +46,14 @@ def pack(nibbles):
     return bytes((nibbles[i] << 4) | nibbles[i + 1] for i in range(0, len(nibbles), 2))
 
 
+def _getlength(font, text, features=None):
+    """font.getlength() with an optional features list; falls back to no-features if libraqm is absent."""
+    try:
+        return font.getlength(text, features=features)
+    except (KeyError, Exception):
+        return font.getlength(text)
+
+
 def render_cell(font, ch, size, ox, oy, features=None, anchor="ls"):
     """one character drawn at (ox, oy) on a size x size L image (anchor: baseline-left by default)."""
     img = Image.new("L", size, 0)
@@ -123,7 +131,7 @@ def raster_font(spec, px, chars, tracking=0.0, gamma=1.0, tabular=True, kern_min
     glyphs, adv, nat = {}, {}, {}
     for ch in chars:
         f = feats if ch.isdigit() else None
-        nat[ch] = adv[ch] = font_hi.getlength(ch, features=f) / SS + tracking * px
+        nat[ch] = adv[ch] = _getlength(font_hi, ch, features=f) / SS + tracking * px
     if tabular:
         digits = [c for c in chars if c.isdigit()]
         if digits:
@@ -151,14 +159,14 @@ def raster_font(spec, px, chars, tracking=0.0, gamma=1.0, tabular=True, kern_min
         glyphs[ch] = (a16, ph)
     h = max(asc + desc, bot_max)
     kern = {}
-    lens = {c: font_hi.getlength(c, features=feats) for c in chars if c != " "}
+    lens = {c: _getlength(font_hi, c, features=feats) for c in chars if c != " "}
     for a in chars:
         for b in chars:
             if a == " " or b == " ":
                 continue
             if a.isdigit() and b.isdigit():
                 continue                       # tabular figures never kern
-            d = (font_hi.getlength(a + b, features=feats) - lens[a] - lens[b]) / SS
+            d = (_getlength(font_hi, a + b, features=feats) - lens[a] - lens[b]) / SS
             d16 = int(round(d * 16))
             if abs(d16) >= kern_min:
                 kern[(a, b)] = max(-127, min(127, d16))
