@@ -122,9 +122,9 @@ static int32_t menu_document(int32_t y, int draw)
 {
     uint32_t i;
     if (draw) {
-        cv_text(6, y + 2, &AF_L, "FELUCCA", T_THEME);
-        cv_text(6, y + 38, &AF_S, "Multi-engine synthesizer", T_TEXT);
-        cv_text(6, y + 58, &AF_M, FELUCCA_VERSION, T_THEME);
+        cv_text(6, y + 2, &AF_L, "ATTIC-ROTO", T_THEME);
+        cv_text(6, y + 38, &AF_S, "Based on Felucca " FELUCCA_VERSION, T_TEXT);
+        cv_text(6, y + 58, &AF_M, ROTO_VERSION, T_THEME);
         cv_text_r(232, y + 61, &AF_S, __DATE__, T_MID, T_BG);
         cv_text(6, y + 82, &AF_S, "(C) 2026 Leo Kuroshita", T_TEXT);
         cv_text(6, y + 100, &AF_S, "H\xFCgelton Instruments", T_TEXT);
@@ -145,10 +145,11 @@ static int32_t menu_document(int32_t y, int draw)
         else y = menu_text(text, y, c->kind == MC_TITLE ? T_THEME : c->kind == MC_URL ? T_MID : T_TEXT, draw);
     }
     y = menu_text("LICENSES + SOURCE", y + 12, T_THEME, draw);
-    y = menu_text("Felucca: GPL-3.0-only; Felucca-Engines MIT; felucca-bsp MPL-2.0; the Sample Pack CC0", y, T_TEXT, draw);
+    y = menu_text("attic-roto and Felucca: GPL-3.0-only; Felucca-Engines MIT; felucca-bsp MPL-2.0; the Sample Pack CC0", y, T_TEXT, draw);
     y = menu_text("Fonts and icons: their licences travel with the source and the release files.", y, T_TEXT, draw);
     y = menu_text("NO WARRANTY", y, T_TEXT, draw);
     y = menu_text("Full notices in source:", y + 8, T_TEXT, draw);
+    y = menu_text("github.com/shoutmarco/attic-roto", y, T_MID, draw);
     y = menu_text("github.com/hugelton/Felucca", y, T_MID, draw);
     return y + 4;
 }

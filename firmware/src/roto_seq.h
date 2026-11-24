@@ -11,6 +11,8 @@
 #define ROTO_SEQ_H
 #include <stdint.h>
 
+#define ROTO_VERSION "v0.2"   /* attic-roto's own version (the splash, MENU > ABOUT) */
+
 #define ROTO_TRACKS  4
 #define ROTO_STEPS  64    /* max steps per ring */
 #define ROTO_CHORD   3    /* extra chord notes per step */
