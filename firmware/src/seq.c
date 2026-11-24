@@ -29,6 +29,18 @@ void roto_note_off(uint32_t t, uint8_t note)
     trk_note_off(&trk[t], note);
 }
 
+/* attic-roto dub throws (audio side): a ring's delay send, the delay feedback */
+void roto_fx_send(uint32_t t, uint8_t dly)
+{
+    if (t >= NTRK) return;
+    trk[t].p[P_DLY] = dly;
+}
+
+void roto_fx_feedback(uint8_t fb)
+{
+    song.g[G_DFDBK] = fb;
+}
+
 static const uint16_t SCALE_MASK[] = {
     0xFFF,                                   /* CHR */
     (1 << 0) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 7) | (1 << 9) | (1 << 11),   /* MAJ */

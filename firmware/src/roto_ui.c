@@ -43,6 +43,13 @@ static const uint16_t RT_TRK_COL[ROTO_TRACKS] = {
     RT_RGB(40, 140, 168),   /* 4 cyan   */
 };
 /* the ring itself: the track colour at about a fifth */
+/* ghost notes: the track colour at about half */
+static const uint16_t RT_TRK_HALF[ROTO_TRACKS] = {
+    RT_RGB(96, 58, 27),
+    RT_RGB(44, 98, 36),
+    RT_RGB(90, 38, 68),
+    RT_RGB(22, 78, 94),
+};
 static const uint16_t RT_TRK_RING[ROTO_TRACKS] = {
     RT_RGB(38, 23, 10),
     RT_RGB(16, 38, 12),
@@ -247,6 +254,7 @@ static struct {
     uint8_t sel, len, pos, div, bpm, hits, view, rot, prob, show;
     uint8_t on[ROTO_STEPS];
     uint8_t note[ROTO_STEPS];
+    uint8_t ghost[ROTO_STEPS];
 } rt_sn;
 
 static void rt_snapshot(void)
@@ -265,6 +273,7 @@ static void rt_snapshot(void)
     for (s = 0; s < ROTO_STEPS; s++) {
         rt_sn.on[s] = (uint8_t)(s < rt_sn.len && k->step[s].on);
         rt_sn.note[s] = k->step[s].note;
+        rt_sn.ghost[s] = (uint8_t)(k->step[s].chance != 0);
         rt_sn.hits = (uint8_t)(rt_sn.hits + rt_sn.on[s]);
     }
 }
@@ -365,7 +374,7 @@ static void rt_draw_ring(void)
 
     /* grey lines joining the on steps, in order, closed */
     for (s = 0; s < n; s++) {
-        if (!rt_sn.on[s]) continue;
+        if (!rt_sn.on[s] || rt_sn.ghost[s]) continue;   /* (the lines join the real hits) */
         rt_polar(rt_step_angle(s, n), RT_R, &x, &y);
         if (have) rt_line(px, py, x, y, RT_LINE);
         else { fx = x; fy = y; }
@@ -379,7 +388,10 @@ static void rt_draw_ring(void)
     for (s = 0; s < n; s++) {
         int32_t a = rt_step_angle(s, n);
         rt_polar(a, RT_R, &x, &y);
-        if (rt_sn.on[s]) {
+        if (rt_sn.on[s] && rt_sn.ghost[s]) {             /* a ghost note: small, half bright, no name */
+            rt_diamond_fill(x, y, 2, RT_BG);
+            rt_diamond_line(x, y, 3, RT_TRK_HALF[rt_sn.sel]);
+        } else if (rt_sn.on[s]) {
             int32_t lx, ly;
             rt_diamond_fill(x, y, 3, RT_BG);
             rt_diamond_line(x, y, 4, col);
@@ -479,7 +491,7 @@ static uint32_t rt_ring_sig(void)
     if (rt_sn.show) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); h = rt_fnv(h, rt_sn.div); h = rt_fnv(h, rt_sn.bpm); }
     else if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); }
     for (s = 0; s < rt_sn.len; s++)
-        h = rt_fnv(h, (uint32_t)(rt_sn.on[s] | (rt_sn.note[s] << 1)));
+        h = rt_fnv(h, (uint32_t)(rt_sn.on[s] | (rt_sn.ghost[s] << 1) | (rt_sn.note[s] << 2)));
     return h;
 }
 

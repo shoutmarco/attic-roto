@@ -23,6 +23,7 @@ typedef struct {
     uint8_t note;   /* MIDI note 0..127 */
     uint8_t vel;    /* 1..127 */
     uint8_t fill;   /* 0: part of the pattern; n: the n-th hit FILL added (taken away first, newest first) */
+    uint8_t chance; /* 0: always plays; 1..99: a ghost note, plays that percent of the time */
 } roto_step_t;
 
 typedef struct {
@@ -34,12 +35,13 @@ typedef struct {
     int8_t   chord[ROTO_CHORD];   /* semitones above the step's note, 0 = none */
     uint8_t  nheld;      /* audio side: notes sounding now */
     uint8_t  held[1 + ROTO_CHORD];
-    uint32_t acc;        /* samples into the current step */
+    uint8_t  sub;        /* audio side: sixteenths into the current step (0..div-1) */
     uint32_t gate_left;  /* samples until the held notes are released */
     uint8_t  fill_note;  /* the note FILL adds when the ring has no hits to copy */
     uint8_t  fill_seq;   /* FILL's counter for the hits it adds */
     uint8_t  rot;        /* how far ROTATE has turned the pattern (0..len-1, for display) */
     uint8_t  prob;       /* PROB: the chance each hit plays, percent (100 = always) */
+    roto_step_t home[ROTO_STEPS];   /* the pattern as set (generator or your edits): EVOLVE drifts away and back to it */
 } roto_track_t;
 
 /* the sound a track gets at power-on (applied by main.c roto_boot_sounds) */
@@ -61,6 +63,14 @@ typedef struct {
     uint8_t  dtime, dfdbk;   /* the delay the pattern was made for (song.g G_DTIME / G_DFDBK) */
     uint32_t seed;
     uint8_t  view;       /* the screen: ROTO_VIEW_RING / ROTO_VIEW_EUCLID (UI side) */
+    uint8_t  swing;      /* 50 = straight; 50..75: the off 1/16s later */
+    uint8_t  evolve;     /* 0..100: how often the pattern changes by itself (and dub throws happen) */
+    /* audio side */
+    uint32_t acc16;      /* samples into the current 1/16 */
+    uint32_t n16;        /* 1/16s since PLAY */
+    uint8_t  throw_trk;  /* the ring in a dub throw (0xFF: none) */
+    uint8_t  throw_left; /* 1/16s until it ends */
+    uint32_t ev_rs;      /* EVOLVE's dice */
 } roto_seq_t;
 
 #define ROTO_VIEW_RING   0
@@ -93,6 +103,8 @@ void roto_stop(void);
 /* the voice side (seq.c) */
 void roto_note_on(uint32_t trk, uint8_t note, uint8_t vel);
 void roto_note_off(uint32_t trk, uint8_t note);
+void roto_fx_send(uint32_t trk, uint8_t dly);   /* a dub throw: the ring's delay send */
+void roto_fx_feedback(uint8_t fb);              /* ... and the delay feedback */
 
 /* UI hooks (roto_ui.c), called from ui_input.c / ui_draw.c */
 int  roto_ui_input(uint32_t pressed, uint32_t notes);
