@@ -57,7 +57,10 @@ def _getlength(font, text, features=None):
 def render_cell(font, ch, size, ox, oy, features=None, anchor="ls"):
     """one character drawn at (ox, oy) on a size x size L image (anchor: baseline-left by default)."""
     img = Image.new("L", size, 0)
-    ImageDraw.Draw(img).text((ox, oy), ch, font=font, fill=255, anchor=anchor, features=features)
+    try:
+        ImageDraw.Draw(img).text((ox, oy), ch, font=font, fill=255, anchor=anchor, features=features)
+    except (KeyError, Exception):
+        ImageDraw.Draw(img).text((ox, oy), ch, font=font, fill=255, anchor=anchor)
     return img
 
 
