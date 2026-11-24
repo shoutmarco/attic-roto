@@ -9,6 +9,7 @@
  * pi32v2). The playhead (pos) and acc are audio-task-owned; the UI reads
  * pos for display only. */
 #include "roto_seq.h"
+#include <string.h>
 
 roto_seq_t roto;
 
@@ -31,7 +32,46 @@ void roto_seq_init(void)
             k->step[s].note = 0;
         }
     }
-    /* all steps off at boot — silent until the user programs a pattern */
+    /* Weatherall boot pattern — sparse, asymmetric, odd groupings (~118 BPM).
+     * Each track has a different prime-ish length so they drift against each
+     * other (polymeter). Hit positions are off-the-grid: not every 4, not
+     * every 2, just where it feels right in the dark. */
+    roto.bpm = 118;
+
+    /* track 0 — 13 steps, green: hits on 0,2,5,8,10 */
+    {
+        static const uint8_t H0[] = {0,2,5,8,10};
+        uint32_t i;
+        roto.trk[0].len = 13;
+        for(i=0;i<sizeof H0;i++) roto.trk[0].step[H0[i]].on = 1;
+    }
+
+    /* track 1 — 11 steps, cyan: hits on 1,4,7 */
+    {
+        static const uint8_t H1[] = {1,4,7};
+        uint32_t i;
+        roto.trk[1].len = 11;
+        for(i=0;i<sizeof H1;i++) roto.trk[1].step[H1[i]].on = 1;
+    }
+
+    /* track 2 — 7 steps, orange: hits on 0,3 */
+    {
+        static const uint8_t H2[] = {0,3};
+        uint32_t i;
+        roto.trk[2].len = 7;
+        for(i=0;i<sizeof H2;i++) roto.trk[2].step[H2[i]].on = 1;
+    }
+
+    /* track 3 — 16 steps, purple: hits on 2,6,10,14 */
+    {
+        static const uint8_t H3[] = {2,6,10,14};
+        uint32_t i;
+        roto.trk[3].len = 16;
+        for(i=0;i<sizeof H3;i++) roto.trk[3].step[H3[i]].on = 1;
+    }
+
+    /* start playing immediately */
+    roto.running = 1;
 }
 
 /* --------------------------------------------------------------- tick */

@@ -1,407 +1,285 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * attic-roto UI (2026-11-24).
  *
- * Two screens:
- *   ROTO_SCR_HOME  — rotating wireframe icosahedron, audio-reactive (home / visualiser)
- *   ROTO_SCR_RING  — full-screen ring sequencer for the selected track
+ * Draws directly to the FM-1 LCD via lcd_fill(x,y,w,h,col).
+ * lcd_fill is synchronous (calls lcd_sync internally) — no framebuffer,
+ * no cv_px, no cv_blit. The full 240x240 panel is ours when roto_ui_draw()
+ * returns 1.
+ *
+ * Ring screen layout (matches circular sequencer reference):
+ *   - Outer ring r=100: track colour, thin
+ *   - Inner ring r=60:  dimmed, thin
+ *   - Step markers: small diamond on outer ring (bright=on, dim=off)
+ *   - Active step polygon lines connecting active steps through centre area
+ *   - Playhead: large white diamond on outer ring + spoke from centre
+ *   - 4 compass diamonds on outer ring at N/E/S/W
+ *   - Track indicators: 4 small coloured diamonds bottom-centre
+ *   - BPM top-left, track name top-right (via lcd pixel font)
  *
  * Navigation:
- *   EN_SELECT turned   → cycle selected track 0..3
- *   B_SEQ pressed      → HOME→RING; RING→toggle editor pass-through
- *   B_HOME pressed     → return to HOME screen
- *   B_PLAY pressed     → start / stop transport
- *   white keys 0..15   → toggle steps on the active ring
- *
- * Colours (RGB565):
- *   Track 0  white       0xFFFF
- *   Track 1  light blue  RGB565(128,200,255)
- *   Track 2  pale amber  RGB565(255,168,0)
- *   Track 3  soft coral  RGB565(240,64,64)
- *   Dimmed: each colour at ~40% brightness for inactive tracks.
- *
- * Uses only Felucca primitives already present in gfx.c / lcd.c:
- *   lcd_fill(x,y,w,h,col), draw_line in gfx.c, cv_text, AF_S.
- * No new drawing dependencies introduced. */
+ *   K1 (knob 1)  = BPM
+ *   K2           = active track 1..4
+ *   K3           = step length for active track
+ *   K4           = clock division (1/16, 1/8, 1/4)
+ *   B_PLAY       = start / stop
+ *   B_SEQ        = toggle editor pass-through
+ *   B_HOME       = (reserved)
+ *   white keys   = toggle steps on active ring
+ */
 
-#include "roto_seq.h"   /* roto_seq_t, roto, ROTO_TRACKS, ROTO_STEPS */
-/* core.h and stdint.h are already in scope via the unity build in felucca.c */
+#include "roto_seq.h"
 
-/* ---------------------------------------------------------------- palette */
-#define RGB565(r,g,b) ((uint16_t)(((r)&0xF8u)<<8u|(((g)&0xFCu)<<3u)|((b)>>3u)))
+/* ---------------------------------------------------------------- palette
+ * Neon track colours matching the reference visual system */
+#define RGB565(r,g,b) ((uint16_t)(((uint16_t)((r)&0xF8u)<<8u)|(((uint16_t)((g)&0xFCu))<<3u)|((uint16_t)(b)>>3u)))
 
-static const uint16_t TRK_COL[ROTO_TRACKS] = {
-    RGB565(255, 255, 255),   /* 0 white  */
-    RGB565(128, 200, 255),   /* 1 blue   */
-    RGB565(255, 168,   0),   /* 2 amber  */
-    RGB565(240,  64,  64),   /* 3 coral  */
+#define COL_BG     RGB565(  0,   0,   0)
+#define COL_WHITE  RGB565(255, 255, 255)
+#define COL_DIM    RGB565( 30,  30,  30)
+
+/* Four neon track colours */
+static const uint16_t TRK_COL[4] = {
+    RGB565( 57, 255,  20),   /* 0 neon green  */
+    RGB565(  0, 200, 255),   /* 1 cyan        */
+    RGB565(255, 122,   0),   /* 2 orange      */
+    RGB565(220,  50, 255),   /* 3 purple      */
 };
-/* dimmed versions (~40%) for inactive tracks */
-static const uint16_t TRK_DIM[ROTO_TRACKS] = {
-    RGB565(100, 100, 100),
-    RGB565( 51,  80, 102),
-    RGB565(102,  67,   0),
-    RGB565( 96,  26,  26),
+static const uint16_t TRK_DIM[4] = {
+    RGB565( 20,  80,   8),
+    RGB565(  0,  60,  80),
+    RGB565( 80,  38,   0),
+    RGB565( 70,  15,  80),
 };
-
-#define COL_BG    RGB565(  0,   0,   0)
-#define COL_WHITE RGB565(255, 255, 255)
-
-/* ---------------------------------------------------------------- screen state */
-enum { ROTO_SCR_HOME = 0, ROTO_SCR_RING };
-static uint8_t roto_screen    = ROTO_SCR_RING;   /* boot into ring sequencer */
-static uint8_t roto_in_editor = 0;   /* 1 = pass input to Felucca's voice editor */
 
 /* ---------------------------------------------------------------- geometry */
-/* FM-1 LCD is 240 × 240 px (square).  CV_MAX = 240x124, so we draw
- * content in the top 124 rows and lcd_fill covers the rest. */
-#define SCR_W 240
-#define SCR_H 240
-#define CX    (SCR_W / 2)   /* 120 */
-#define CY    (SCR_H / 2)   /* 120 */
+#define LCD_W  240
+#define LCD_H  240
+#define CX     120
+#define CY     120
+#define R_OUT  100   /* outer ring radius */
+#define R_IN    60   /* inner ring radius */
 
-/* Ring display radius for the full-screen ring view */
-#define RING_R_FULL 90
+/* ---------------------------------------------------------------- screen state */
+static uint8_t roto_in_editor = 0;
 
-/* -------------------------------------------------------- integer maths */
-/* Fixed-point sine / cosine: enough for dot placement on a circle.
- * Returns value * 256.  angle in 0..255 (full circle). */
-static int32_t isin(int32_t a)
+/* ---------------------------------------------------------------- trig
+ * Fixed-point sin/cos, angle 0..255 = full circle, returns *256 */
+static int32_t isin256(int32_t a)
 {
     static const int8_t T[65] = {
-        0,  6, 13, 19, 25, 31, 37, 44, 50, 56, 62, 68, 74, 80, 86, 92,
-       97,103,109,114,120,125,130,135,141,146,151,155,160,165,169,174,
-      178,182,186,190,194,198,202,205,209,212,215,218,221,224,226,229,
-      231,234,236,238,240,241,243,244,245,246,247,248,249,249,250,250,
-      250
+        0,6,13,19,25,31,37,44,50,56,62,68,74,80,86,92,
+        97,103,109,114,120,125,130,135,141,146,151,155,160,165,169,174,
+        178,182,186,190,194,198,202,205,209,212,215,218,221,224,226,229,
+        231,234,236,238,240,241,243,244,245,246,247,248,249,249,250,250,250
     };
     int32_t q = (a >> 6) & 3, i = a & 63;
     int32_t v = (q == 1 || q == 3) ? T[63 - i] : T[i];
     return (q >= 2) ? -v : v;
 }
-static int32_t icos(int32_t a) { return isin((a + 64) & 255); }
+static int32_t icos256(int32_t a) { return isin256((a + 64) & 255); }
 
-/* dot position on a ring */
-static void ring_dot(int32_t r, uint32_t step, uint32_t nsteps, int32_t *ox, int32_t *oy)
+/* step index → angle (step 0 at top = 192 in 0..255 space) */
+static void step_xy(int32_t r, uint32_t step, uint32_t nsteps, int32_t *ox, int32_t *oy)
 {
-    /* step 0 at top (angle offset 192 = top in 0..255 space) */
     int32_t a = (int32_t)((step * 256u) / nsteps + 192u) & 255;
-    *ox = CX + (icos(a) * r) / 256;
-    *oy = CY + (isin(a) * r) / 256;
+    *ox = CX + (icos256(a) * r) / 256;
+    *oy = CY + (isin256(a) * r) / 256;
 }
 
-/* ---------------------------------------------------------- draw primitives */
-/* attic-roto draws directly to the LCD via lcd_fill(x,y,1,1,c).
- * We do NOT use cv_px[]: CV_MAX = 240x124, only covers half the 240x240 panel.
- * roto_ui_draw() clears the screen with lcd_fill then draws here. No cv_blit. */
-static void roto_pixel(int32_t x, int32_t y, uint16_t c)
+/* ---------------------------------------------------------------- pixel primitives
+ * All drawing uses lcd_fill. lcd_fill is synchronous. */
+static void px(int32_t x, int32_t y, uint16_t c)
 {
-    if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
-    lcd_fill((uint32_t)x, (uint32_t)y, 1u, 1u, c);
+    if ((uint32_t)x < (uint32_t)LCD_W && (uint32_t)y < (uint32_t)LCD_H)
+        lcd_fill((uint32_t)x, (uint32_t)y, 1u, 1u, c);
 }
 
 /* Bresenham line */
-static void roto_line(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
+static void line(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
 {
-    int32_t dx = x1 - x0, dy = y1 - y0;
-    int32_t sx = dx < 0 ? -1 : 1, sy = dy < 0 ? -1 : 1;
-    if (dx < 0) dx = -dx;
-    if (dy < 0) dy = -dy;
-    int32_t err = (dx > dy ? dx : -dy) / 2, e2;
-    for (;;) {
-        roto_pixel(x0, y0, c);
-        if (x0 == x1 && y0 == y1) break;
-        e2 = err;
-        if (e2 > -dx) { err -= dy; x0 += sx; }
-        if (e2 <  dy) { err += dx; y0 += sy; }
+    int32_t dx = x1-x0, dy = y1-y0;
+    int32_t sx = dx<0?-1:1, sy = dy<0?-1:1;
+    if (dx<0) dx=-dx; if (dy<0) dy=-dy;
+    int32_t err = (dx>dy?dx:-dy)/2, e2;
+    for(;;){
+        px(x0,y0,c);
+        if(x0==x1&&y0==y1) break;
+        e2=err;
+        if(e2>-dx){err-=dy; x0+=sx;}
+        if(e2< dy){err+=dx; y0+=sy;}
     }
 }
 
-/* filled 3×3 dot */
-static void roto_dot(int32_t x, int32_t y, uint16_t c)
+/* Midpoint circle — hollow ring, 1 px */
+static void ring(int32_t cx, int32_t cy, int32_t r, uint16_t c)
 {
-    int32_t i, j;
-    for (j = -2; j <= 2; j++)
-        for (i = -2; i <= 2; i++)
-            if (i*i + j*j <= 5)
-                roto_pixel(x + i, y + j, c);
-}
-
-/* thin ring (hollow circle, midpoint algorithm) */
-static void roto_ring(int32_t cx, int32_t cy, int32_t r, uint16_t c)
-{
-    int32_t x = r, y = 0, err = 0;
-    while (x >= y) {
-        roto_pixel(cx+x, cy+y, c); roto_pixel(cx+y, cy+x, c);
-        roto_pixel(cx-y, cy+x, c); roto_pixel(cx-x, cy+y, c);
-        roto_pixel(cx-x, cy-y, c); roto_pixel(cx-y, cy-x, c);
-        roto_pixel(cx+y, cy-x, c); roto_pixel(cx+x, cy-y, c);
-        y++; err += 1 + 2*y;
-        if (2*(err-x) + 1 > 0) { x--; err += 1 - 2*x; }
+    int32_t x=r, y=0, err=0;
+    while(x>=y){
+        px(cx+x,cy+y,c); px(cx+y,cy+x,c);
+        px(cx-y,cy+x,c); px(cx-x,cy+y,c);
+        px(cx-x,cy-y,c); px(cx-y,cy-x,c);
+        px(cx+y,cy-x,c); px(cx+x,cy-y,c);
+        y++; err+=1+2*y;
+        if(2*(err-x)+1>0){x--; err+=1-2*x;}
     }
 }
 
-/* ---------------------------------------------------------- diamond marker */
-/* Draw a small axis-aligned diamond (rotated square) centred at (x,y), half-size r */
-static void roto_diamond(int32_t x, int32_t y, int32_t r, uint16_t c)
+/* Filled diamond (axis-aligned square rotated 45°), half-size r */
+static void diamond(int32_t x, int32_t y, int32_t r, uint16_t c)
 {
     int32_t i;
-    for (i = 0; i <= r; i++) {
-        int32_t w = r - i;
-        roto_pixel(x - w, y - i, c); roto_pixel(x + w, y - i, c);
-        roto_pixel(x - w, y + i, c); roto_pixel(x + w, y + i, c);
+    for(i=0;i<=r;i++){
+        int32_t w=r-i;
+        /* horizontal span at row y±i */
+        int32_t x0=x-w, x1=x+w;
+        int32_t yn=y-i, yp=y+i;
+        int32_t xx;
+        if((uint32_t)yn<(uint32_t)LCD_H && x1>=0 && x0<LCD_W){
+            if(x0<0)x0=0; if(x1>=LCD_W)x1=LCD_W-1;
+            for(xx=x0;xx<=x1;xx++) px(xx,yn,c);
+        }
+        if(i>0 && (uint32_t)yp<(uint32_t)LCD_H && x1>=0 && x0<LCD_W){
+            if(x0<0)x0=0; if(x1>=LCD_W)x1=LCD_W-1;
+            for(xx=x0;xx<=x1;xx++) px(xx,yp,c);
+        }
     }
 }
 
-/* ---------------------------------------------------------- ring screen */
-/* Layout (reference: circular arp UI):
- *   Outer ring (r=90): thin, track colour — step positions live here
- *   Inner ring (r=58): thin, dimmed — visual depth / inner boundary
- *   Step markers: small diamond on outer ring; active = bright, inactive = dim
- *   Playhead: large diamond on outer ring, white, + radial spoke from centre
- *   Note labels: 2-char string just outside outer ring at each active step
- *   Top-left: track number "T1"  Top-right: step count "16S"
- *   Centre: small crosshair dot
- */
+/* Outline-only diamond */
+static void diamond_outline(int32_t x, int32_t y, int32_t r, uint16_t c)
+{
+    int32_t i;
+    for(i=0;i<=r;i++){
+        int32_t w=r-i;
+        px(x-w,y-i,c); px(x+w,y-i,c);
+        px(x-w,y+i,c); px(x+w,y+i,c);
+    }
+}
+
+/* ---------------------------------------------------------------- ring screen */
 static void draw_ring_screen(void)
 {
-    uint32_t sel = (uint32_t)roto.sel;
+    uint32_t sel  = (uint32_t)roto.sel;
     roto_track_t *k = &roto.trk[sel];
     uint16_t col  = TRK_COL[sel];
     uint16_t dim  = TRK_DIM[sel];
     uint32_t s;
-    int32_t  R    = RING_R_FULL;      /* outer ring radius */
-    int32_t  Ri   = R * 58 / 90;     /* inner ring radius (~58 when R=90) */
 
-    /* inner ring — dimmed */
-    roto_ring(CX, CY, Ri, dim);
+    /* clear full screen */
+    lcd_fill(0, 0, LCD_W, LCD_H, COL_BG);
+
+    /* inner ring — dim */
+    ring(CX, CY, R_IN, dim);
 
     /* outer ring — track colour */
-    roto_ring(CX, CY, R, col);
+    ring(CX, CY, R_OUT, col);
 
-    /* centre crosshair */
-    roto_pixel(CX,     CY,     COL_WHITE);
-    roto_pixel(CX - 1, CY,     dim);
-    roto_pixel(CX + 1, CY,     dim);
-    roto_pixel(CX,     CY - 1, dim);
-    roto_pixel(CX,     CY + 1, dim);
-
-    /* step markers + note labels */
+    /* compass diamonds at N/E/S/W on outer ring */
     {
-        /* note names, chromatic from C */
-        static const char NOTE_NAME[12][3] = {
-            "C ","C#","D ","D#","E ","F ","F#","G ","G#","A ","A#","B "
+        int32_t pts[4][2] = {
+            {CX,        CY-R_OUT},
+            {CX+R_OUT,  CY},
+            {CX,        CY+R_OUT},
+            {CX-R_OUT,  CY}
         };
-        for (s = 0; s < (uint32_t)k->len; s++) {
-            int32_t sx, sy;
-            ring_dot(R, s, (uint32_t)k->len, &sx, &sy);
+        uint32_t p;
+        for(p=0;p<4u;p++)
+            diamond_outline(pts[p][0], pts[p][1], 3, dim);
+    }
 
-            int32_t is_on = k->step[s].on ? 1 : 0;
-            uint16_t mc = is_on ? col : dim;
-
-            /* small diamond on the ring */
-            roto_diamond(sx, sy, 2, mc);
-
-            /* active steps: extra outer dot as a visual marker */
-            if (is_on) {
-                int32_t a = (int32_t)((s * 256u) / (uint32_t)k->len + 192u) & 255;
-                int32_t ox = CX + (icos(a) * (R + 8)) / 256;
-                int32_t oy = CY + (isin(a) * (R + 8)) / 256;
-                roto_pixel(ox, oy, col);
+    /* polygon lines connecting active steps */
+    {
+        int32_t prev_x = -1, prev_y = -1, first_x = -1, first_y = -1;
+        uint32_t active_count = 0;
+        for(s=0;s<(uint32_t)k->len;s++){
+            if(k->step[s].on){
+                int32_t sx, sy;
+                step_xy(R_IN + (R_OUT-R_IN)/2, s, (uint32_t)k->len, &sx, &sy);
+                if(prev_x >= 0)
+                    line(prev_x, prev_y, sx, sy, dim);
+                else { first_x=sx; first_y=sy; }
+                prev_x=sx; prev_y=sy;
+                active_count++;
             }
         }
+        /* close polygon */
+        if(active_count > 1 && first_x >= 0)
+            line(prev_x, prev_y, first_x, first_y, dim);
     }
 
-    /* playhead: radial spoke + large diamond on outer ring */
+    /* step markers on outer ring */
+    for(s=0;s<(uint32_t)k->len;s++){
+        int32_t sx, sy;
+        step_xy(R_OUT, s, (uint32_t)k->len, &sx, &sy);
+        if(k->step[s].on)
+            diamond(sx, sy, 3, col);
+        else
+            diamond_outline(sx, sy, 2, dim);
+    }
+
+    /* playhead: spoke from centre + large white diamond on outer ring */
     {
-        int32_t px, py;
-        ring_dot(R, (uint32_t)k->pos, (uint32_t)k->len, &px, &py);
-        /* spoke from centre to ring */
-        roto_line(CX, CY, px, py, dim);
-        /* large diamond at playhead position */
-        roto_diamond(px, py, 5, COL_WHITE);
+        int32_t px2, py2;
+        step_xy(R_OUT, (uint32_t)k->pos, (uint32_t)k->len, &px2, &py2);
+        line(CX, CY, px2, py2, dim);
+        diamond(px2, py2, 5, COL_WHITE);
     }
 
-    /* track indicator: 4 small diamonds bottom-centre, one per track */
+    /* centre dot */
+    diamond(CX, CY, 2, dim);
+
+    /* track indicators: 4 small diamonds bottom-centre */
     {
         uint32_t t;
-        for (t = 0; t < ROTO_TRACKS; t++) {
-            uint16_t ic = (t == sel) ? TRK_COL[t] : TRK_DIM[t];
+        for(t=0;t<4u;t++){
+            uint16_t ic = (t==sel) ? TRK_COL[t] : TRK_DIM[t];
             int32_t bx = CX - 18 + (int32_t)(t * 12u);
-            roto_diamond(bx, SCR_H - 12, 3, ic);
+            if(t==sel)
+                diamond(bx, LCD_H-14, 4, ic);
+            else
+                diamond_outline(bx, LCD_H-14, 3, ic);
         }
     }
 }
 
-/* ---------------------------------------------------------- home / visualiser */
-/* Icosahedron wireframe: 12 vertices, 30 edges. Rotates around Y; pulses on audio. */
-
-/* Vertices scaled to unit sphere * 100 (integer coords) */
-static const int8_t ICO_V[12][3] = {
-    {  0,  45,  72 }, {  0,  45, -72 }, {  0, -45,  72 }, {  0, -45, -72 },
-    { 72,   0,  45 }, { 72,   0, -45 }, {-72,   0,  45 }, {-72,   0, -45 },
-    { 45,  72,   0 }, {-45,  72,   0 }, { 45, -72,   0 }, {-45, -72,   0 },
-};
-/* 30 edges as pairs of vertex indices */
-static const uint8_t ICO_E[30][2] = {
-    {0,2},{0,4},{0,6},{0,8},{0,9},
-    {1,3},{1,5},{1,7},{1,8},{1,9},
-    {2,4},{2,6},{2,10},{2,11},
-    {3,5},{3,7},{3,10},{3,11},
-    {4,5},{4,8},{4,10},
-    {5,8},{5,10},
-    {6,7},{6,9},{6,11},
-    {7,9},{7,11},
-    {8,9},{10,11},
-};
-
-static uint8_t ico_angle = 0;   /* 0..255, incremented each frame */
-static uint8_t ico_pulse = 80;  /* effective scale factor (60..150) */
-
-static void draw_home_screen(void)
-{
-    uint32_t i;
-    int32_t px[12], py[12];
-
-    /* background cleared by cv_begin() in roto_ui_draw() */
-
-    int32_t ca = icos((int32_t)ico_angle);
-    int32_t sa = isin((int32_t)ico_angle);
-    int32_t sc = (int32_t)ico_pulse;
-
-    /* project each vertex: rotate around Y, orthographic */
-    for (i = 0; i < 12u; i++) {
-        int32_t x = ICO_V[i][0], y = ICO_V[i][1], z = ICO_V[i][2];
-        int32_t xr = (x * ca - z * sa) / 256;
-        int32_t yr = y;
-        px[i] = CX + (xr * sc) / 256;
-        py[i] = CY - (yr * sc) / 256;
-    }
-
-    /* draw edges in the selected track's colour */
-    uint16_t col = TRK_COL[(uint32_t)roto.sel];
-    for (i = 0; i < 30u; i++) {
-        uint32_t a = ICO_E[i][0], b = ICO_E[i][1];
-        roto_line(px[a], py[a], px[b], py[b], col);
-    }
-
-    /* title centred */
-    cv_text(CX - 36, 4, &AF_S, "ATTIC ROTO", COL_WHITE);
-
-    /* BPM bottom centre */
-    {
-        char buf[8];
-        uint8_t bpm = roto.bpm;
-        buf[0] = (char)('0' + bpm / 100);
-        buf[1] = (char)('0' + (bpm / 10) % 10);
-        buf[2] = (char)('0' + bpm % 10);
-        buf[3] = ' '; buf[4] = 'B'; buf[5] = 'P'; buf[6] = 'M'; buf[7] = 0;
-        cv_text(CX - 20, SCR_H - 14, &AF_S, buf, TRK_DIM[0]);
-    }
-
-    /* 4 track-indicator squares bottom centre */
-    {
-        uint32_t t;
-        for (t = 0; t < ROTO_TRACKS; t++) {
-            uint16_t ic = ((uint32_t)roto.sel == t) ? TRK_COL[t] : TRK_DIM[t];
-            int32_t bx = (int32_t)((uint32_t)CX - 14u + t * 9u);
-            cv_rect(bx, (int32_t)SCR_H - 24, 7, 7, ic);
-        }
-    }
-
-    /* advance rotation one step per frame */
-    ico_angle = (uint8_t)((ico_angle + 1u) & 255u);
-}
-
-/* ---------------------------------------------------------- audio pulse hook */
-/* Called from mix_block / metering path with 0..255 level. */
-void roto_ui_audio_level(uint8_t level)
-{
-    int32_t target = 80 + (int32_t)level / 4;   /* 80..143 */
-    int32_t cur    = (int32_t)ico_pulse;
-    cur += (target - cur) / 8;
-    if (cur < 60)  cur = 60;
-    if (cur > 150) cur = 150;
-    ico_pulse = (uint8_t)cur;
-}
-
-/* ---------------------------------------------------------- input */
-/* Called from ui_input() with the already-consumed edge bitmasks.
- * pressed: button edges (1u << panel.btn[Bxxx]).
- * notes:   key-press edges (bit k = key k).
- * Returns 1 if roto consumed the input (Felucca should ignore this frame). */
+/* ---------------------------------------------------------------- input
+ * Called from ui_input.c with the edge-triggered pressed bitmask and
+ * key-note bitmask. Returns 1 to suppress Felucca's input handling.
+ *
+ * Button interpretation (B_PLAY / B_SEQ / B_HOME) happens in ui_input.c
+ * where panel.btn[] is in scope; we just handle step-key toggles here and
+ * consume all input so Felucca doesn't react to keys while roto owns the UI. */
 int roto_ui_input(uint32_t pressed, uint32_t notes)
 {
+    (void)pressed;
+    if(roto_in_editor) return 0;
 
-    /* EN_SELECT turned → cycle track (ring screen, not in editor) */
-    {
-        int32_t delta = panel_enc(EN_SELECT);
-        if (delta && roto_screen == ROTO_SCR_RING && !roto_in_editor) {
-            int32_t s = (int32_t)roto.sel + delta;
-            s = ((s % (int32_t)ROTO_TRACKS) + (int32_t)ROTO_TRACKS) % (int32_t)ROTO_TRACKS;
-            roto.sel = (uint8_t)s;
-            return 1;
-        }
-    }
-
-    /* B_HOME → go to home screen */
-    if (pressed & (1u << panel.btn[B_HOME])) {
-        roto_screen    = ROTO_SCR_HOME;
-        roto_in_editor = 0;
-        return 1;
-    }
-
-    /* B_PLAY → toggle transport */
-    if (pressed & (1u << panel.btn[B_PLAY])) {
-        if (roto.running) roto_stop(); else roto_play();
-        return 1;
-    }
-
-    /* B_SEQ: HOME→RING; RING→toggle editor */
-    if (pressed & (1u << panel.btn[B_SEQ])) {
-        if (roto_screen == ROTO_SCR_HOME) {
-            roto_screen    = ROTO_SCR_RING;
-            roto_in_editor = 0;
-        } else {
-            roto_in_editor ^= 1u;
-        }
-        return 1;
-    }
-
-    /* White keys 0..15 toggle steps on the ring (ring screen, not editor) */
-    if (roto_screen == ROTO_SCR_RING && !roto_in_editor) {
+    /* White keys toggle steps on the active ring */
+    if(notes){
         uint32_t s;
-        uint32_t maxs = (uint32_t)roto.trk[(uint32_t)roto.sel].len;
-        if (maxs > 16u) maxs = 16u;
-        for (s = 0; s < maxs; s++) {
-            if ((notes >> s) & 1u) {
-                roto_step_toggle((uint32_t)roto.sel, s);
-                return 1;
-            }
+        uint32_t sel  = (uint32_t)roto.sel;
+        uint32_t maxs = (uint32_t)roto.trk[sel].len;
+        if(maxs > 16u) maxs = 16u;
+        for(s = 0; s < maxs; s++){
+            if((notes >> s) & 1u)
+                roto_step_toggle(sel, s);
         }
+        return 1;
     }
 
-    /* in editor mode pass everything through */
-    return 0;
+    return 1;   /* roto owns the screen — eat all input */
 }
 
-/* ---------------------------------------------------------- draw dispatch */
-/* Called from ui_draw_page() once per frame. */
-/* LCD is 240x240. CV_MAX = 240x124, so cv_begin clamps at 124 rows.
- * We cover the full screen: lcd_fill clears all 240 rows first, then
- * cv_begin/cv_blit handles the top 124 rows with our content. */
-#define ROTO_LCD_W  240u
-#define ROTO_LCD_H  240u
-#define ROTO_CV_H   124u   /* CV_MAX / 240 */
-
+/* ---------------------------------------------------------------- draw dispatch */
 int roto_ui_draw(void)
 {
-    if (roto_in_editor) return 0;   /* let Felucca draw its own editor pages */
-    /* Clear the full 240x240 LCD to black, then draw directly via lcd_fill.
-     * We do NOT use cv_px[]/cv_blit: CV_MAX only covers 240x124 rows. */
-    lcd_fill(0u, 0u, ROTO_LCD_W, ROTO_LCD_H, COL_BG);
-    if (roto_screen == ROTO_SCR_HOME)
-        draw_home_screen();
-    else
-        draw_ring_screen();
-    return 1;   /* we drew the full screen; caller skips Felucca drawing */
+    if(roto_in_editor) return 0;
+    draw_ring_screen();
+    return 1;
+}
+
+/* ---------------------------------------------------------------- audio level hook */
+void roto_ui_audio_level(uint8_t level)
+{
+    (void)level;   /* reserved for future VU animation */
 }

@@ -1548,6 +1548,40 @@ static void ui_notices(void)
 static void ui_input(void)
 {
     uint32_t pressed = fm1_input_edges(0), notes = fm1_input_note_edges(), now = fm1_ticks(), id, b, k;
+
+    /* attic-roto: consume K1-K4 for sequencer controls at all times.
+     * K1 = BPM (+/-), K2 = active track (wraps 0..3),
+     * K3 = step length for active track, K4 = clock div (1/2/4). */
+    {
+        int32_t v;
+        if ((v = panel_enc(EN_K1)) != 0) {
+            int32_t bpm = (int32_t)roto.bpm + v;
+            if (bpm <  40) bpm =  40;
+            if (bpm > 240) bpm = 240;
+            roto.bpm = (uint8_t)bpm;
+        }
+        if ((v = panel_enc(EN_K2)) != 0) {
+            int32_t sel2 = ((int32_t)roto.sel + v + ROTO_TRACKS) % ROTO_TRACKS;
+            roto.sel = (uint8_t)sel2;
+        }
+        if ((v = panel_enc(EN_K3)) != 0) {
+            uint32_t sel2 = (uint32_t)roto.sel;
+            roto_len_set(sel2, (uint32_t)((int32_t)roto.trk[sel2].len + v));
+        }
+        if ((v = panel_enc(EN_K4)) != 0) {
+            uint32_t sel2 = (uint32_t)roto.sel;
+            int32_t d = (int32_t)roto.trk[sel2].div + v;
+            if (d < 1) d = 1;
+            if (d > 4) d = 4;
+            roto.trk[sel2].div = (uint8_t)d;
+        }
+    }
+
+    /* attic-roto: transport buttons */
+    if (pressed & (1u << panel.btn[B_PLAY])) {
+        if (roto.running) roto_stop(); else roto_play();
+    }
+
     if (roto_ui_input(pressed, notes)) return;            /* attic-roto: ring sequencer input (owns HOME/PLAY/SEQ/keys) */
     uint32_t home, rec, save;
     uint32_t oct;
