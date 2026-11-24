@@ -36,6 +36,7 @@ void roto_seq_init(void)
         roto.trk[t].len = 16;
         roto.trk[t].div = 1;
         roto.trk[t].gate = 50;
+        roto.trk[t].prob = 100;
     }
 }
 
@@ -202,12 +203,20 @@ static void release(uint32_t t, roto_track_t *k)
     k->gate_left = 0;
 }
 
+static uint32_t audio_rs = 0x2545F491u;     /* PROB's dice (audio side only) */
+
 static void fire(uint32_t t, roto_track_t *k, uint32_t step_len)
 {
     const roto_step_t *st = &k->step[k->pos];
     uint32_t i, g;
     if (k->nheld) release(t, k);
     if (!st->on) return;
+    if (k->prob < 100u) {
+        uint32_t x = audio_rs;
+        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+        audio_rs = x;
+        if (x % 100u >= k->prob) return;
+    }
     k->held[k->nheld++] = st->note;
     roto_note_on(t, st->note, st->vel ? st->vel : 100u);
     for (i = 0; i < ROTO_CHORD; i++) {
@@ -269,6 +278,7 @@ void roto_len_set(uint32_t trk, uint32_t len)
     if (len < 1) len = 1;
     if (len > ROTO_STEPS) len = ROTO_STEPS;
     roto.trk[trk].len = (uint8_t)len;
+    roto.trk[trk].rot = (uint8_t)(roto.trk[trk].rot % len);
     if (roto.trk[trk].pos != ROTO_POS_START && roto.trk[trk].pos >= len)
         roto.trk[trk].pos = 0;
 }
@@ -372,6 +382,32 @@ void roto_rotate(uint32_t trk, int32_t dir)
         for (s = 0; s + 1u < len; s++) k->step[s] = k->step[s + 1u];
         k->step[len - 1u] = keep;
     }
+    k->rot = (uint8_t)((k->rot + (dir > 0 ? 1u : len - 1u)) % len);
+}
+
+/* EUCLID: exactly `hits` hits as evenly as they go (step s is a hit when
+ * (s * hits) mod len < hits), turned by the ring's rot. The ring's notes and
+ * velocities are kept, in order, and dealt out again round the new hits. */
+void roto_euclid(uint32_t trk, uint32_t hits)
+{
+    roto_track_t *k;
+    uint8_t note[ROTO_STEPS], vel[ROTO_STEPS];
+    uint32_t s, n = 0, j = 0, len;
+    if (trk >= ROTO_TRACKS) return;
+    k = &roto.trk[trk];
+    len = k->len ? k->len : 1u;
+    if (hits > len) hits = len;
+    for (s = 0; s < len; s++)
+        if (k->step[s].on) { note[n] = k->step[s].note; vel[n] = k->step[s].vel; n++; }
+    if (!n) { note[0] = k->fill_note ? k->fill_note : 60u; vel[0] = 96u; n = 1; }
+    for (s = 0; s < len; s++) {
+        uint32_t u = (s + len - k->rot % len) % len;    /* the step before the turn */
+        roto_step_t *st = &k->step[s];
+        st->fill = 0;
+        st->on = (uint8_t)((u * hits) % len < hits);
+        if (st->on) { st->note = note[j % n]; st->vel = vel[j % n]; j++; }
+    }
+    k->fill_seq = 0;
 }
 
 /* ------------------------------------------------------------- transport */

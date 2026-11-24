@@ -38,6 +38,8 @@ typedef struct {
     uint32_t gate_left;  /* samples until the held notes are released */
     uint8_t  fill_note;  /* the note FILL adds when the ring has no hits to copy */
     uint8_t  fill_seq;   /* FILL's counter for the hits it adds */
+    uint8_t  rot;        /* how far ROTATE has turned the pattern (0..len-1, for display) */
+    uint8_t  prob;       /* PROB: the chance each hit plays, percent (100 = always) */
 } roto_track_t;
 
 /* the sound a track gets at power-on (applied by main.c roto_boot_sounds) */
@@ -58,7 +60,14 @@ typedef struct {
     uint8_t  mode;       /* 0 aeolian, 1 dorian, 2 phrygian */
     uint8_t  dtime, dfdbk;   /* the delay the pattern was made for (song.g G_DTIME / G_DFDBK) */
     uint32_t seed;
+    uint8_t  view;       /* the screen: ROTO_VIEW_RING / ROTO_VIEW_EUCLID (UI side) */
 } roto_seq_t;
+
+#define ROTO_VIEW_RING   0
+#define ROTO_VIEW_EUCLID 1
+
+/* what a knob just changed, for roto_ui_show() (the centre shows it for a moment) */
+enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_SHOW_RATE, ROTO_SHOW_PROB, ROTO_SHOW_BPM };
 
 extern roto_seq_t roto;
 
@@ -75,6 +84,7 @@ void roto_step_toggle(uint32_t trk, uint32_t step);
 void roto_len_set(uint32_t trk, uint32_t len);
 void roto_fill(uint32_t trk, int32_t dir);     /* one hit more (dir > 0) or fewer, spread evenly, notes kept */
 void roto_rotate(uint32_t trk, int32_t dir);   /* spin the pattern one step later (dir > 0) or earlier */
+void roto_euclid(uint32_t trk, uint32_t hits); /* exactly `hits` hits, spread evenly (Euclidean), turned by rot; notes kept */
 
 /* transport (UI side; the audio side releases notes after a stop) */
 void roto_play(void);
@@ -86,7 +96,8 @@ void roto_note_off(uint32_t trk, uint8_t note);
 
 /* UI hooks (roto_ui.c), called from ui_input.c / ui_draw.c */
 int  roto_ui_input(uint32_t pressed, uint32_t notes);
-int  roto_ui_draw(int force);   /* returns 1 if the screen is ours (caller skips Felucca drawing); force: redraw everything */
+int  roto_ui_draw(int force, uint32_t now_ms);   /* returns 1 if the screen is ours (caller skips Felucca drawing); force: redraw everything */
+void roto_ui_show(uint32_t what, uint32_t now_ms);   /* a knob turned: show its value in the centre for a moment */
 void roto_ui_audio_level(uint8_t level);
 
 #endif /* ROTO_SEQ_H */

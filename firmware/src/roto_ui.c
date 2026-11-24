@@ -244,7 +244,7 @@ static void rt_note_name(char *out, uint32_t midi)
 
 /* what this frame draws (snapshotted once; the audio side keeps moving) */
 static struct {
-    uint8_t sel, len, pos, div, bpm, hits;
+    uint8_t sel, len, pos, div, bpm, hits, view, rot, prob, show;
     uint8_t on[ROTO_STEPS];
     uint8_t note[ROTO_STEPS];
 } rt_sn;
@@ -258,6 +258,9 @@ static void rt_snapshot(void)
     rt_sn.pos = k->pos < rt_sn.len ? k->pos : 0;
     rt_sn.div = k->div;
     rt_sn.bpm = roto.bpm;
+    rt_sn.view = roto.view;
+    rt_sn.rot = k->rot;
+    rt_sn.prob = k->prob;
     rt_sn.hits = 0;
     for (s = 0; s < ROTO_STEPS; s++) {
         rt_sn.on[s] = (uint8_t)(s < rt_sn.len && k->step[s].on);
@@ -276,11 +279,19 @@ static void rt_draw_header(void)
     buf[0] = (char)('1' + rt_sn.sel); buf[1] = 0;
     x = rt_text_b(4, 4, buf, 1, col);
     x = rt_text_b(x + 6, 4, roto.snd[rt_sn.sel].name[0] ? roto.snd[rt_sn.sel].name : "RING", 1, col);
-    rt_text_s(x + 8, 8, RT_DIV[rt_sn.div <= 4 ? rt_sn.div : 1], RT_TEXT);
-
-    rt_fmt_u(buf, rt_sn.bpm);
-    { uint32_t n = rt_strlen(buf); buf[n] = ' '; buf[n+1] = 'B'; buf[n+2] = 'P'; buf[n+3] = 'M'; buf[n+4] = 0; }
-    rt_text_s(RT_BPM_X1 - RT_TEXT_S_W(buf), 8, buf, RT_GREY);
+    if (rt_sn.view == ROTO_VIEW_EUCLID) {               /* "EUCLID 3/5", as the reference */
+        char e[16] = "EUCLID ";
+        uint32_t n;
+        rt_fmt_u(e + 7, rt_sn.hits);
+        n = rt_strlen(e); e[n] = '/';
+        rt_fmt_u(e + n + 1, rt_sn.len);
+        rt_text_s(x + 8, 8, e, RT_TEXT);
+    } else {
+        rt_text_s(x + 8, 8, RT_DIV[rt_sn.div <= 4 ? rt_sn.div : 1], RT_TEXT);
+        rt_fmt_u(buf, rt_sn.bpm);
+        { uint32_t n = rt_strlen(buf); buf[n] = ' '; buf[n+1] = 'B'; buf[n+2] = 'P'; buf[n+3] = 'M'; buf[n+4] = 0; }
+        rt_text_s(RT_BPM_X1 - RT_TEXT_S_W(buf), 8, buf, RT_GREY);
+    }
 
     for (t = 0; t < ROTO_TRACKS; t++) {
         int32_t bx = RT_BOX_X + t * RT_BOX_W;
@@ -298,6 +309,49 @@ static void rt_draw_header(void)
         }
     }
     rt_rect(4, RT_RULE_Y, 236, RT_RULE_Y + 2, RT_RULE);
+}
+
+/* the centre: the hits and "OF n"; while a knob turns, its value and name
+ * (the name in the track colour) instead; on EUCLID also "ROT r  p%" */
+static void rt_draw_centre(void)
+{
+    static const char *const RT_DIVS[5] = {"1/16", "1/16", "1/8", "3/16", "1/4"};
+    static const char *const RT_SHOWN[7] = {"", "LENGTH", "FILL", "ROTATE", "RATE", "PROB", "BPM"};
+    char big[8], small[16];
+    uint16_t small_col = RT_GREY;
+    uint32_t w;
+
+    switch (rt_sn.show) {
+    case ROTO_SHOW_LENGTH: rt_fmt_u(big, rt_sn.len); break;
+    case ROTO_SHOW_FILL:   rt_fmt_u(big, rt_sn.hits); break;
+    case ROTO_SHOW_ROTATE: big[0] = '+'; rt_fmt_u(big + 1, rt_sn.rot); if (!rt_sn.rot) { big[0] = '0'; big[1] = 0; } break;
+    case ROTO_SHOW_RATE:   { const char *d = RT_DIVS[rt_sn.div <= 4 ? rt_sn.div : 1]; uint32_t i; for (i = 0; d[i]; i++) big[i] = d[i]; big[i] = 0; } break;
+    case ROTO_SHOW_PROB:   rt_fmt_u(big, rt_sn.prob); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
+    case ROTO_SHOW_BPM:    rt_fmt_u(big, rt_sn.bpm); break;
+    default:               rt_fmt_u(big, rt_sn.hits); break;
+    }
+    if (rt_sn.show && rt_sn.show < 7u) {
+        const char *l = RT_SHOWN[rt_sn.show];
+        uint32_t i;
+        for (i = 0; l[i]; i++) small[i] = l[i];
+        small[i] = 0;
+        small_col = RT_TRK_COL[rt_sn.sel];
+    } else {
+        small[0] = 'O'; small[1] = 'F'; small[2] = ' ';
+        rt_fmt_u(small + 3, rt_sn.len);
+    }
+    rt_text_b(RT_CX - (int32_t)rt_strlen(big) * 8, RT_CY - 18, big, 2, RT_TEXT);
+    rt_text_s(RT_CX - RT_TEXT_S_W(small) / 2, RT_CY + 10, small, small_col);
+
+    if (rt_sn.view == ROTO_VIEW_EUCLID && !rt_sn.show) {
+        char e[16] = "ROT ";
+        uint32_t n;
+        rt_fmt_u(e + 4, rt_sn.rot);
+        n = rt_strlen(e); e[n] = ' '; e[n + 1] = ' ';
+        rt_fmt_u(e + n + 2, rt_sn.prob);
+        n = rt_strlen(e); e[n] = '%'; e[n + 1] = 0;
+        rt_text_s(RT_CX - RT_TEXT_S_W(e) / 2, RT_CY + 21, e, RT_GREY);
+    }
 }
 
 static void rt_draw_ring(void)
@@ -319,14 +373,7 @@ static void rt_draw_ring(void)
     }
     if (have > 2) rt_line(px, py, fx, fy, RT_LINE);
 
-    /* centre: hits, "OF n" */
-    rt_fmt_u(buf, rt_sn.hits);
-    rt_text_b(RT_CX - (int32_t)rt_strlen(buf) * 8, RT_CY - 18, buf, 2, RT_TEXT);
-    {
-        char of[10] = "OF ";
-        rt_fmt_u(of + 3, n);
-        rt_text_s(RT_CX - RT_TEXT_S_W(of) / 2, RT_CY + 10, of, RT_GREY);
-    }
+    rt_draw_centre();
 
     /* steps */
     for (s = 0; s < n; s++) {
@@ -393,6 +440,15 @@ static uint8_t roto_in_editor = 0;
 static uint8_t rt_shown = 0;               /* 0: nothing of ours on screen yet */
 static uint32_t rt_shown_head, rt_shown_ring;   /* what the header / the ring showed */
 static uint8_t rt_shown_pos, rt_shown_bpm, rt_shown_sel;
+static uint8_t rt_show_what;                /* ROTO_SHOW_*: a knob's value in the centre ... */
+static uint32_t rt_show_until;              /* ... until this time (ms) */
+#define RT_SHOW_MS 900u
+
+void roto_ui_show(uint32_t what, uint32_t now_ms)
+{
+    rt_show_what = (uint8_t)what;
+    rt_show_until = now_ms + RT_SHOW_MS;
+}
 
 #define RT_BAND 8                           /* rows per strip when a big area changes */
 #define RT_HEAD_Y1 (RT_RULE_Y + 2)          /* the header: rows 0 .. RT_HEAD_Y1 - 1 */
@@ -405,6 +461,8 @@ static uint32_t rt_head_sig(void)
     uint32_t h = 2166136261u, s;
     h = rt_fnv(h, rt_sn.sel);
     h = rt_fnv(h, rt_sn.div);
+    h = rt_fnv(h, rt_sn.view);
+    if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.hits); h = rt_fnv(h, rt_sn.len); }
     for (s = 0; s < sizeof roto.snd[0].name && roto.snd[rt_sn.sel].name[s]; s++)
         h = rt_fnv(h, (uint8_t)roto.snd[rt_sn.sel].name[s]);
     return h;
@@ -416,6 +474,10 @@ static uint32_t rt_ring_sig(void)
     uint32_t h = 2166136261u, s;
     h = rt_fnv(h, rt_sn.sel);
     h = rt_fnv(h, rt_sn.len);
+    h = rt_fnv(h, rt_sn.view);
+    h = rt_fnv(h, rt_sn.show);
+    if (rt_sn.show) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); h = rt_fnv(h, rt_sn.div); h = rt_fnv(h, rt_sn.bpm); }
+    else if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); }
     for (s = 0; s < rt_sn.len; s++)
         h = rt_fnv(h, (uint32_t)(rt_sn.on[s] | (rt_sn.note[s] << 1)));
     return h;
@@ -430,12 +492,14 @@ static void rt_repaint_rows(int32_t y0, int32_t y1)
         rt_repaint(0, y, RT_W, y + RT_BAND < y1 ? y + RT_BAND : y1);
 }
 
-int roto_ui_draw(int force)
+int roto_ui_draw(int force, uint32_t now_ms)
 {
     uint32_t head, ring;
     if (roto_in_editor) { rt_shown = 0; return 0; }
 
     rt_snapshot();
+    if (rt_show_what && (int32_t)(rt_show_until - now_ms) <= 0) rt_show_what = 0;
+    rt_sn.show = rt_show_what;
     head = rt_head_sig();
     ring = rt_ring_sig();
     rt_clip_all();
@@ -447,7 +511,7 @@ int roto_ui_draw(int force)
             rt_repaint_rows(RT_HEAD_Y1, RT_H);          /* the ring only (K3, a step key) */
         if (head != rt_shown_head)
             rt_repaint_rows(0, RT_HEAD_Y1);             /* the header only (K4) */
-        else if (rt_sn.bpm != rt_shown_bpm)
+        else if (rt_sn.bpm != rt_shown_bpm && rt_sn.view == ROTO_VIEW_RING)
             rt_repaint(RT_BPM_X1 - 50, 4, RT_BPM_X1 + 1, 17);
         if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos) {
             int32_t x0, y0, x1, y1;

@@ -163,6 +163,15 @@ int main(int argc, char **argv)
     for (f = 0; f < frames; f += CTL) {
         int32_t o[2 * CTL];
         if (f >= stop_at && roto.running) roto_stop();
+        if (getenv("DEMO") && f % FS < CTL) {            /* DEMO: euclid moves while it plays, one a few seconds */
+            uint32_t sec = f / FS, h, s2;
+            #define HITS(tk) (h = 0, ({ for (s2 = 0; s2 < roto.trk[tk].len; s2++) h += roto.trk[tk].step[s2].on; }), h)
+            if (sec == 8)  { HITS(1); roto_euclid(1, h + 2); printf("  %2us  bass: EUCLID FILL +2 -> %u of %u\n", sec, h + 2, roto.trk[1].len); }
+            if (sec == 12) { roto.trk[0].prob = 75; printf("  %2us  drums: PROB 75%%\n", sec); }
+            if (sec == 16) { HITS(3); roto_euclid(3, h + 2); roto_rotate(3, 1); roto_rotate(3, 1); printf("  %2us  blips: EUCLID FILL +2, ROTATE +2\n", sec); }
+            if (sec == 20) { roto_rotate(2, 1); roto_rotate(2, 1); roto_rotate(2, 1); printf("  %2us  stabs: ROTATE +3\n", sec); }
+            if (sec == 24) { HITS(1); roto_len_set(1, roto.trk[1].len - 2u); roto_euclid(1, h); roto.trk[0].prob = 100; printf("  %2us  bass: LENGTH -2 (hits kept), drums PROB 100%%\n", sec); }
+        }
         mix_block(o, CTL);
         for (i = 0; i < 2u * CTL; i++) {
             int32_t v = o[i], a = v < 0 ? -v : v;

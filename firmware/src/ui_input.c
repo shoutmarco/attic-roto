@@ -415,8 +415,8 @@ static void ui_leds(void)
         led_pos_init();
         ready = 1;
     }
-    if (!ui.layer || FAM_BTN[fam] != layer_btn())
-        led_put(nl, panel.btn[FAM_BTN[fam]], 1);
+    (void)fam;                                          /* attic-roto: the lit button is the screen you're on */
+    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : B_HOME], 1);
     if ((k = arp_led()) != 2u && (!ui.layer || layer_btn() != B_ARP))
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3]))
@@ -1549,28 +1549,70 @@ static void ui_input(void)
 {
     uint32_t pressed = fm1_input_edges(0), notes = fm1_input_note_edges(), now = fm1_ticks(), id, b, k;
 
-    /* attic-roto: the ring sequencer's controls, at all times.
-     * K1 LENGTH, K2 FILL, K3 ROTATE, K4 RATE (the ring on screen);
-     * SELECT the tempo, ALGO the ring on screen (PRESET does nothing here). */
+    /* attic-roto: the ring sequencer's controls, at all times. On the screen:
+     *   RING    K1 LENGTH  K2 FILL    K3 ROTATE  K4 RATE
+     *   EUCLID  K1 FILL    K2 ROTATE  K3 LENGTH  K4 PROB   (as the euclid reference)
+     * SELECT the tempo, ALGO which ring; PRESET does nothing here.
+     * Every turn shows its value in the centre for a moment (roto_ui_show). */
     {
         int32_t v, i;
         uint32_t sel2 = (uint32_t)roto.sel;
-        if ((v = panel_enc(EN_K1)) != 0)
-            roto_len_set(sel2, (uint32_t)clamp((int32_t)roto.trk[sel2].len + v, 1, ROTO_STEPS));
-        if ((v = panel_enc(EN_K2)) != 0)
-            for (i = 0; i < (v < 0 ? -v : v); i++) roto_fill(sel2, v);
-        if ((v = panel_enc(EN_K3)) != 0)
+        roto_track_t *k = &roto.trk[sel2];
+        int32_t len_k = roto.view == ROTO_VIEW_EUCLID ? EN_K3 : EN_K1;
+        int32_t fill_k = roto.view == ROTO_VIEW_EUCLID ? EN_K1 : EN_K2;
+        int32_t rot_k = roto.view == ROTO_VIEW_EUCLID ? EN_K2 : EN_K3;
+        if ((v = panel_enc(len_k)) != 0) {
+            uint32_t s, h = 0;
+            for (s = 0; s < k->len; s++) h += k->step[s].on;
+            roto_len_set(sel2, (uint32_t)clamp((int32_t)k->len + v, 1, ROTO_STEPS));
+            if (roto.view == ROTO_VIEW_EUCLID)         /* EUCLID: the same hits, spread over the new length */
+                roto_euclid(sel2, h);
+            roto_ui_show(ROTO_SHOW_LENGTH, fm1_ms);
+        }
+        if ((v = panel_enc(fill_k)) != 0) {
+            if (roto.view == ROTO_VIEW_EUCLID) {
+                uint32_t s, h = 0;
+                for (s = 0; s < k->len; s++) h += k->step[s].on;
+                roto_euclid(sel2, (uint32_t)clamp((int32_t)h + v, 0, k->len));
+            } else {
+                for (i = 0; i < (v < 0 ? -v : v); i++) roto_fill(sel2, v);
+            }
+            roto_ui_show(ROTO_SHOW_FILL, fm1_ms);
+        }
+        if ((v = panel_enc(rot_k)) != 0) {
             for (i = 0; i < (v < 0 ? -v : v); i++) roto_rotate(sel2, v);
-        if ((v = panel_enc(EN_K4)) != 0)
-            roto.trk[sel2].div = (uint8_t)clamp((int32_t)roto.trk[sel2].div + v, 1, 4);
+            roto_ui_show(ROTO_SHOW_ROTATE, fm1_ms);
+        }
+        if ((v = panel_enc(EN_K4)) != 0) {
+            if (roto.view == ROTO_VIEW_EUCLID) {
+                k->prob = (uint8_t)clamp((int32_t)k->prob + v * 5, 0, 100);
+                roto_ui_show(ROTO_SHOW_PROB, fm1_ms);
+            } else {
+                k->div = (uint8_t)clamp((int32_t)k->div + v, 1, 4);
+                roto_ui_show(ROTO_SHOW_RATE, fm1_ms);
+            }
+        }
         if ((v = panel_enc(EN_SELECT)) != 0) {
             int32_t bpm = clamp((int32_t)roto.bpm + v, 40, 240);
             roto.bpm = (uint8_t)bpm;
             song.g[G_BPM] = (int16_t)bpm;              /* (the delay follows the tempo) */
+            roto_ui_show(ROTO_SHOW_BPM, fm1_ms);
         }
-        if ((v = panel_enc(EN_ALGO)) != 0)
+        if ((v = panel_enc(EN_ALGO)) != 0) {
             roto.sel = (uint8_t)(((int32_t)roto.sel + v % ROTO_TRACKS + ROTO_TRACKS) % ROTO_TRACKS);
+            roto_ui_show(ROTO_SHOW_NONE, fm1_ms);      /* (a new ring: its own numbers) */
+        }
         panel_enc(EN_PRESET);                          /* (taken, so a turn here never loads a sound later) */
+    }
+
+    /* attic-roto: the screens. SEQ: EUCLID (again: back to the ring). HOME: the ring. */
+    if (pressed & (1u << panel.btn[B_SEQ])) {
+        roto.view = roto.view == ROTO_VIEW_EUCLID ? ROTO_VIEW_RING : ROTO_VIEW_EUCLID;
+        roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
+    }
+    if (pressed & (1u << panel.btn[B_HOME])) {
+        roto.view = ROTO_VIEW_RING;
+        roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
 
     /* attic-roto: transport buttons */
