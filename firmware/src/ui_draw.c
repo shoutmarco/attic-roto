@@ -1626,7 +1626,10 @@ static void ui_draw(void)
 }
 static void ui_draw_page(uint32_t counting)
 {
-    if (roto_ui_draw()) return;                           /* attic-roto: drew full screen, skip Felucca drawing */
+    if (roto_ui_draw(ui.force)) {                         /* attic-roto: the screen is ours, skip Felucca drawing */
+        ui.force = 0;
+        return;
+    }
     if (ui.uboot) {
         draw_uboot();
         draw_head();

@@ -10,6 +10,9 @@
  * pos for display only. */
 #include "roto_seq.h"
 
+/* stage 1 (look only): the rings run but play nothing. Stage 2 turns this on. */
+#define ROTO_SOUND 0
+
 roto_seq_t roto;
 
 /* ---------------------------------------------------------------- init */
@@ -103,7 +106,7 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
                 /* advance playhead */
                 k->pos = (uint8_t)((k->pos + 1u) % (uint32_t)k->len);
                 /* fire if the step is on */
-                if (k->step[k->pos].on)
+                if (ROTO_SOUND && k->step[k->pos].on)
                     roto_note_on(t, k->step[k->pos].note);
             }
         }

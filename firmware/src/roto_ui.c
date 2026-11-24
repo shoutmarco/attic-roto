@@ -1,285 +1,458 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * attic-roto UI (2026-11-24).
+ * attic-roto ring screen.
  *
- * Draws directly to the FM-1 LCD via lcd_fill(x,y,w,h,col).
- * lcd_fill is synchronous (calls lcd_sync internally) — no framebuffer,
- * no cv_px, no cv_blit. The full 240x240 panel is ours when roto_ui_draw()
- * returns 1.
+ * Our own drawing code. The only thing used from the firmware is
+ * lcd_fill(x, y, w, h, colour), which writes a rectangle to the 240x240 LCD.
  *
- * Ring screen layout (matches circular sequencer reference):
- *   - Outer ring r=100: track colour, thin
- *   - Inner ring r=60:  dimmed, thin
- *   - Step markers: small diamond on outer ring (bright=on, dim=off)
- *   - Active step polygon lines connecting active steps through centre area
- *   - Playhead: large white diamond on outer ring + spoke from centre
- *   - 4 compass diamonds on outer ring at N/E/S/W
- *   - Track indicators: 4 small coloured diamonds bottom-centre
- *   - BPM top-left, track name top-right (via lcd pixel font)
+ * No flicker: the screen is cleared and drawn in full only when something
+ * structural changes (track, steps, length, or the firmware asks via `force`).
+ * When just the playhead moves, two small boxes are repainted: the one it left
+ * and the one it entered. Each box is cleared and the whole scene is drawn
+ * again clipped to that box, so what ends up on the glass is exactly what a
+ * full redraw would give, without ever blanking the screen.
  *
- * Navigation:
- *   K1 (knob 1)  = BPM
- *   K2           = active track 1..4
- *   K3           = step length for active track
- *   K4           = clock division (1/16, 1/8, 1/4)
- *   B_PLAY       = start / stop
- *   B_SEQ        = toggle editor pass-through
- *   B_HOME       = (reserved)
- *   white keys   = toggle steps on active ring
+ * Look (from the user's seq-euclid / seq-step references, controls removed):
+ *   header   "1 RING" in the track colour, rate in white, BPM in grey,
+ *            the four track boxes at the right, a dark rule under it
+ *   ring     a dim circle in the track colour; off steps a small grey dot,
+ *            on steps a diamond outline in the track colour with their note
+ *            name outside the ring, grey lines joining the on steps
+ *   playhead filled diamond in a grey circle, three pink dots trailing it
+ *   centre   the number of hits, "OF <len>" under it
  */
 
 #include "roto_seq.h"
+#include "roto_font.h"
 
-/* ---------------------------------------------------------------- palette
- * Neon track colours matching the reference visual system */
-#define RGB565(r,g,b) ((uint16_t)(((uint16_t)((r)&0xF8u)<<8u)|(((uint16_t)((g)&0xFCu))<<3u)|((uint16_t)(b)>>3u)))
+/* ------------------------------------------------------------- colours */
+#define RT_RGB(r, g, b) ((uint16_t)((((r) & 0xF8u) << 8) | (((g) & 0xFCu) << 3) | ((b) >> 3)))
 
-#define COL_BG     RGB565(  0,   0,   0)
-#define COL_WHITE  RGB565(255, 255, 255)
-#define COL_DIM    RGB565( 30,  30,  30)
+#define RT_BG    RT_RGB(0, 0, 0)
+#define RT_TEXT  RT_RGB(200, 204, 200)
+#define RT_GREY  RT_RGB(112, 116, 112)
+#define RT_LINE  RT_RGB(88, 92, 88)
+#define RT_DOT   RT_RGB(72, 76, 72)
+#define RT_RULE  RT_RGB(32, 32, 32)
+#define RT_PINK  RT_RGB(164, 68, 123)
 
-/* Four neon track colours */
-static const uint16_t TRK_COL[4] = {
-    RGB565( 57, 255,  20),   /* 0 neon green  */
-    RGB565(  0, 200, 255),   /* 1 cyan        */
-    RGB565(255, 122,   0),   /* 2 orange      */
-    RGB565(220,  50, 255),   /* 3 purple      */
+/* track colours, sampled from the reference images */
+static const uint16_t RT_TRK_COL[ROTO_TRACKS] = {
+    RT_RGB(172, 105, 49),   /* 1 orange */
+    RT_RGB(82, 178, 65),    /* 2 green  */
+    RT_RGB(164, 68, 123),   /* 3 pink   */
+    RT_RGB(40, 140, 168),   /* 4 cyan   */
 };
-static const uint16_t TRK_DIM[4] = {
-    RGB565( 20,  80,   8),
-    RGB565(  0,  60,  80),
-    RGB565( 80,  38,   0),
-    RGB565( 70,  15,  80),
+/* the ring itself: the track colour at about a fifth */
+static const uint16_t RT_TRK_RING[ROTO_TRACKS] = {
+    RT_RGB(38, 23, 10),
+    RT_RGB(16, 38, 12),
+    RT_RGB(36, 14, 27),
+    RT_RGB(8, 31, 37),
 };
 
-/* ---------------------------------------------------------------- geometry */
-#define LCD_W  240
-#define LCD_H  240
-#define CX     120
-#define CY     120
-#define R_OUT  100   /* outer ring radius */
-#define R_IN    60   /* inner ring radius */
+/* ------------------------------------------------------------- layout */
+#define RT_W       240
+#define RT_H       240
+#define RT_CX      120
+#define RT_CY      132
+#define RT_R       80          /* ring radius */
+#define RT_R_LABEL 95          /* note names sit on this radius */
+#define RT_RULE_Y  19
+#define RT_BOX_X   196         /* the four track boxes */
+#define RT_BOX_W   10
+#define RT_BPM_X1  190         /* BPM text ends here */
 
-/* ---------------------------------------------------------------- screen state */
-static uint8_t roto_in_editor = 0;
+/* ------------------------------------------------------------- clip */
+static int32_t rt_cx0, rt_cy0, rt_cx1, rt_cy1;      /* inclusive x0,y0 / exclusive x1,y1 */
 
-/* ---------------------------------------------------------------- trig
- * Fixed-point sin/cos, angle 0..255 = full circle, returns *256 */
-static int32_t isin256(int32_t a)
+static void rt_clip_all(void) { rt_cx0 = 0; rt_cy0 = 0; rt_cx1 = RT_W; rt_cy1 = RT_H; }
+
+static void rt_clip_set(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
 {
-    static const int8_t T[65] = {
-        0,6,13,19,25,31,37,44,50,56,62,68,74,80,86,92,
-        97,103,109,114,120,125,130,135,141,146,151,155,160,165,169,174,
-        178,182,186,190,194,198,202,205,209,212,215,218,221,224,226,229,
-        231,234,236,238,240,241,243,244,245,246,247,248,249,249,250,250,250
-    };
-    int32_t q = (a >> 6) & 3, i = a & 63;
-    int32_t v = (q == 1 || q == 3) ? T[63 - i] : T[i];
-    return (q >= 2) ? -v : v;
-}
-static int32_t icos256(int32_t a) { return isin256((a + 64) & 255); }
-
-/* step index → angle (step 0 at top = 192 in 0..255 space) */
-static void step_xy(int32_t r, uint32_t step, uint32_t nsteps, int32_t *ox, int32_t *oy)
-{
-    int32_t a = (int32_t)((step * 256u) / nsteps + 192u) & 255;
-    *ox = CX + (icos256(a) * r) / 256;
-    *oy = CY + (isin256(a) * r) / 256;
+    rt_cx0 = x0 < 0 ? 0 : x0;  rt_cy0 = y0 < 0 ? 0 : y0;
+    rt_cx1 = x1 > RT_W ? RT_W : x1;  rt_cy1 = y1 > RT_H ? RT_H : y1;
 }
 
-/* ---------------------------------------------------------------- pixel primitives
- * All drawing uses lcd_fill. lcd_fill is synchronous. */
-static void px(int32_t x, int32_t y, uint16_t c)
+/* a horizontal run of pixels, clipped: one lcd_fill */
+static void rt_hspan(int32_t x0, int32_t x1, int32_t y, uint16_t c)
 {
-    if ((uint32_t)x < (uint32_t)LCD_W && (uint32_t)y < (uint32_t)LCD_H)
-        lcd_fill((uint32_t)x, (uint32_t)y, 1u, 1u, c);
+    if (y < rt_cy0 || y >= rt_cy1) return;
+    if (x0 < rt_cx0) x0 = rt_cx0;
+    if (x1 > rt_cx1) x1 = rt_cx1;
+    if (x1 <= x0) return;
+    lcd_fill((uint32_t)x0, (uint32_t)y, (uint32_t)(x1 - x0), 1u, c);
 }
 
-/* Bresenham line */
-static void line(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
+static void rt_px(int32_t x, int32_t y, uint16_t c) { rt_hspan(x, x + 1, y, c); }
+
+static void rt_rect(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
 {
-    int32_t dx = x1-x0, dy = y1-y0;
-    int32_t sx = dx<0?-1:1, sy = dy<0?-1:1;
-    if (dx<0) dx=-dx; if (dy<0) dy=-dy;
-    int32_t err = (dx>dy?dx:-dy)/2, e2;
-    for(;;){
-        px(x0,y0,c);
-        if(x0==x1&&y0==y1) break;
-        e2=err;
-        if(e2>-dx){err-=dy; x0+=sx;}
-        if(e2< dy){err+=dx; y0+=sy;}
+    if (x0 < rt_cx0) x0 = rt_cx0;
+    if (y0 < rt_cy0) y0 = rt_cy0;
+    if (x1 > rt_cx1) x1 = rt_cx1;
+    if (y1 > rt_cy1) y1 = rt_cy1;
+    if (x1 <= x0 || y1 <= y0) return;
+    lcd_fill((uint32_t)x0, (uint32_t)y0, (uint32_t)(x1 - x0), (uint32_t)(y1 - y0), c);
+}
+
+/* ------------------------------------------------------------- geometry */
+/* angle: 1024 units per turn. Returns Q14 (16384 = 1.0). */
+static int32_t rt_sin(int32_t a)
+{
+    a &= 1023;
+    if (a < 256)  return  (int32_t)ROTO_SIN[a];
+    if (a < 512)  return  (int32_t)ROTO_SIN[512 - a];
+    if (a < 768)  return -(int32_t)ROTO_SIN[a - 512];
+    return -(int32_t)ROTO_SIN[1024 - a];
+}
+static int32_t rt_cos(int32_t a) { return rt_sin(a + 256); }
+
+static int32_t rt_round14(int32_t v) { return v >= 0 ? (v + 8192) >> 14 : -((-v + 8192) >> 14); }
+
+/* point at angle a on radius r around the ring centre */
+static void rt_polar(int32_t a, int32_t r, int32_t *x, int32_t *y)
+{
+    *x = RT_CX + rt_round14(rt_cos(a) * r);
+    *y = RT_CY + rt_round14(rt_sin(a) * r);
+}
+
+/* step s of n: step 0 at the top, clockwise */
+static int32_t rt_step_angle(uint32_t s, uint32_t n)
+{
+    return (int32_t)((s * 1024u + n / 2u) / n) - 256;
+}
+
+/* ------------------------------------------------------------- shapes */
+static void rt_line(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
+{
+    int32_t dx = x1 > x0 ? x1 - x0 : x0 - x1, sx = x0 < x1 ? 1 : -1;
+    int32_t dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1;
+    int32_t err = dx + dy, e2;
+    for (;;) {
+        rt_px(x0, y0, c);
+        if (x0 == x1 && y0 == y1) break;
+        e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
     }
 }
 
-/* Midpoint circle — hollow ring, 1 px */
-static void ring(int32_t cx, int32_t cy, int32_t r, uint16_t c)
+static void rt_circle(int32_t xc, int32_t yc, int32_t r, uint16_t c)
 {
-    int32_t x=r, y=0, err=0;
-    while(x>=y){
-        px(cx+x,cy+y,c); px(cx+y,cy+x,c);
-        px(cx-y,cy+x,c); px(cx-x,cy+y,c);
-        px(cx-x,cy-y,c); px(cx-y,cy-x,c);
-        px(cx+y,cy-x,c); px(cx+x,cy-y,c);
-        y++; err+=1+2*y;
-        if(2*(err-x)+1>0){x--; err+=1-2*x;}
+    int32_t x = r, y = 0, d = 1 - r;
+    while (x >= y) {
+        rt_px(xc + x, yc + y, c); rt_px(xc - x, yc + y, c);
+        rt_px(xc + x, yc - y, c); rt_px(xc - x, yc - y, c);
+        rt_px(xc + y, yc + x, c); rt_px(xc - y, yc + x, c);
+        rt_px(xc + y, yc - x, c); rt_px(xc - y, yc - x, c);
+        y++;
+        if (d < 0) d += 2 * y + 1;
+        else { x--; d += 2 * (y - x) + 1; }
     }
 }
 
-/* Filled diamond (axis-aligned square rotated 45°), half-size r */
-static void diamond(int32_t x, int32_t y, int32_t r, uint16_t c)
+/* diamond of half-size r, filled: one span per row */
+static void rt_diamond_fill(int32_t x, int32_t y, int32_t r, uint16_t c)
 {
     int32_t i;
-    for(i=0;i<=r;i++){
-        int32_t w=r-i;
-        /* horizontal span at row y±i */
-        int32_t x0=x-w, x1=x+w;
-        int32_t yn=y-i, yp=y+i;
-        int32_t xx;
-        if((uint32_t)yn<(uint32_t)LCD_H && x1>=0 && x0<LCD_W){
-            if(x0<0)x0=0; if(x1>=LCD_W)x1=LCD_W-1;
-            for(xx=x0;xx<=x1;xx++) px(xx,yn,c);
-        }
-        if(i>0 && (uint32_t)yp<(uint32_t)LCD_H && x1>=0 && x0<LCD_W){
-            if(x0<0)x0=0; if(x1>=LCD_W)x1=LCD_W-1;
-            for(xx=x0;xx<=x1;xx++) px(xx,yp,c);
-        }
+    for (i = -r; i <= r; i++) {
+        int32_t w = r - (i < 0 ? -i : i);
+        rt_hspan(x - w, x + w + 1, y + i, c);
     }
 }
 
-/* Outline-only diamond */
-static void diamond_outline(int32_t x, int32_t y, int32_t r, uint16_t c)
+static void rt_diamond_line(int32_t x, int32_t y, int32_t r, uint16_t c)
 {
     int32_t i;
-    for(i=0;i<=r;i++){
-        int32_t w=r-i;
-        px(x-w,y-i,c); px(x+w,y-i,c);
-        px(x-w,y+i,c); px(x+w,y+i,c);
+    for (i = -r; i <= r; i++) {
+        int32_t w = r - (i < 0 ? -i : i);
+        rt_px(x - w, y + i, c);
+        if (w) rt_px(x + w, y + i, c);
     }
 }
 
-/* ---------------------------------------------------------------- ring screen */
-static void draw_ring_screen(void)
+/* ------------------------------------------------------------- text */
+static int32_t rt_glyph(char ch)
 {
-    uint32_t sel  = (uint32_t)roto.sel;
-    roto_track_t *k = &roto.trk[sel];
-    uint16_t col  = TRK_COL[sel];
-    uint16_t dim  = TRK_DIM[sel];
+    int32_t i;
+    for (i = 0; ROTO_FONT_CHARS[i]; i++)
+        if (ROTO_FONT_CHARS[i] == ch) return i;
+    return 0;   /* space */
+}
+
+static uint32_t rt_strlen(const char *s) { uint32_t n = 0; while (s[n]) n++; return n; }
+
+/* one bitmap row: each run of set bits is one span (scale s: s x s pixels) */
+static void rt_row_spans(int32_t x, int32_t y, uint32_t bits, int32_t s, uint16_t c)
+{
+    int32_t b = 0;
+    while (b < 8) {
+        if (bits & (0x80u >> b)) {
+            int32_t e = b, k;
+            while (e < 8 && (bits & (0x80u >> e))) e++;
+            for (k = 0; k < s; k++)
+                rt_hspan(x + b * s, x + e * s, y + k, c);
+            b = e;
+        } else b++;
+    }
+}
+
+/* small 5x7, advance 6 */
+static int32_t rt_text_s(int32_t x, int32_t y, const char *t, uint16_t c)
+{
+    for (; *t; t++, x += 6) {
+        const unsigned char *g = ROTO_SMALL[rt_glyph(*t)];
+        int32_t r;
+        for (r = 0; r < ROTO_SMALL_H; r++) rt_row_spans(x, y + r, g[r], 1, c);
+    }
+    return x;
+}
+#define RT_TEXT_S_W(t) ((int32_t)rt_strlen(t) * 6 - 1)
+
+/* big 8x11 (Unifont), scale s, advance 8*s */
+static int32_t rt_text_b(int32_t x, int32_t y, const char *t, int32_t s, uint16_t c)
+{
+    for (; *t; t++, x += 8 * s) {
+        const unsigned char *g = ROTO_BIG[rt_glyph(*t)];
+        int32_t r;
+        for (r = 0; r < ROTO_BIG_H; r++) rt_row_spans(x, y + r * s, g[r], s, c);
+    }
+    return x;
+}
+
+static void rt_fmt_u(char *out, uint32_t v)
+{
+    char tmp[6];
+    uint32_t n = 0;
+    do { tmp[n++] = (char)('0' + v % 10u); v /= 10u; } while (v && n < 5u);
+    while (n) *out++ = tmp[--n];
+    *out = 0;
+}
+
+static void rt_note_name(char *out, uint32_t midi)
+{
+    static const char RT_NM[12][3] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    const char *n = RT_NM[midi % 12u];
+    int32_t oct = (int32_t)(midi / 12u) - 1;
+    while (*n) *out++ = *n++;
+    if (oct < 0) { *out++ = '-'; oct = -oct; }
+    *out++ = (char)('0' + oct);
+    *out = 0;
+}
+
+/* ------------------------------------------------------------- scene */
+#define RT_ROOT_NOTE 48u       /* display root: C3 */
+
+/* what this frame draws (snapshotted once; the audio side keeps moving) */
+static struct {
+    uint8_t sel, len, pos, div, bpm, hits;
+    uint8_t on[ROTO_STEPS];
+    uint8_t note[ROTO_STEPS];
+} rt_sn;
+
+static void rt_snapshot(void)
+{
+    const roto_track_t *k = &roto.trk[roto.sel < ROTO_TRACKS ? roto.sel : 0];
     uint32_t s;
-
-    /* clear full screen */
-    lcd_fill(0, 0, LCD_W, LCD_H, COL_BG);
-
-    /* inner ring — dim */
-    ring(CX, CY, R_IN, dim);
-
-    /* outer ring — track colour */
-    ring(CX, CY, R_OUT, col);
-
-    /* compass diamonds at N/E/S/W on outer ring */
-    {
-        int32_t pts[4][2] = {
-            {CX,        CY-R_OUT},
-            {CX+R_OUT,  CY},
-            {CX,        CY+R_OUT},
-            {CX-R_OUT,  CY}
-        };
-        uint32_t p;
-        for(p=0;p<4u;p++)
-            diamond_outline(pts[p][0], pts[p][1], 3, dim);
-    }
-
-    /* polygon lines connecting active steps */
-    {
-        int32_t prev_x = -1, prev_y = -1, first_x = -1, first_y = -1;
-        uint32_t active_count = 0;
-        for(s=0;s<(uint32_t)k->len;s++){
-            if(k->step[s].on){
-                int32_t sx, sy;
-                step_xy(R_IN + (R_OUT-R_IN)/2, s, (uint32_t)k->len, &sx, &sy);
-                if(prev_x >= 0)
-                    line(prev_x, prev_y, sx, sy, dim);
-                else { first_x=sx; first_y=sy; }
-                prev_x=sx; prev_y=sy;
-                active_count++;
-            }
-        }
-        /* close polygon */
-        if(active_count > 1 && first_x >= 0)
-            line(prev_x, prev_y, first_x, first_y, dim);
-    }
-
-    /* step markers on outer ring */
-    for(s=0;s<(uint32_t)k->len;s++){
-        int32_t sx, sy;
-        step_xy(R_OUT, s, (uint32_t)k->len, &sx, &sy);
-        if(k->step[s].on)
-            diamond(sx, sy, 3, col);
-        else
-            diamond_outline(sx, sy, 2, dim);
-    }
-
-    /* playhead: spoke from centre + large white diamond on outer ring */
-    {
-        int32_t px2, py2;
-        step_xy(R_OUT, (uint32_t)k->pos, (uint32_t)k->len, &px2, &py2);
-        line(CX, CY, px2, py2, dim);
-        diamond(px2, py2, 5, COL_WHITE);
-    }
-
-    /* centre dot */
-    diamond(CX, CY, 2, dim);
-
-    /* track indicators: 4 small diamonds bottom-centre */
-    {
-        uint32_t t;
-        for(t=0;t<4u;t++){
-            uint16_t ic = (t==sel) ? TRK_COL[t] : TRK_DIM[t];
-            int32_t bx = CX - 18 + (int32_t)(t * 12u);
-            if(t==sel)
-                diamond(bx, LCD_H-14, 4, ic);
-            else
-                diamond_outline(bx, LCD_H-14, 3, ic);
-        }
+    rt_sn.sel = roto.sel < ROTO_TRACKS ? roto.sel : 0;
+    rt_sn.len = k->len ? k->len : 1;
+    rt_sn.pos = k->pos < rt_sn.len ? k->pos : 0;
+    rt_sn.div = k->div;
+    rt_sn.bpm = roto.bpm;
+    rt_sn.hits = 0;
+    for (s = 0; s < ROTO_STEPS; s++) {
+        rt_sn.on[s] = (uint8_t)(s < rt_sn.len && k->step[s].on);
+        rt_sn.note[s] = k->step[s].note;
+        rt_sn.hits = (uint8_t)(rt_sn.hits + rt_sn.on[s]);
     }
 }
 
-/* ---------------------------------------------------------------- input
- * Called from ui_input.c with the edge-triggered pressed bitmask and
- * key-note bitmask. Returns 1 to suppress Felucca's input handling.
- *
- * Button interpretation (B_PLAY / B_SEQ / B_HOME) happens in ui_input.c
- * where panel.btn[] is in scope; we just handle step-key toggles here and
- * consume all input so Felucca doesn't react to keys while roto owns the UI. */
-int roto_ui_input(uint32_t pressed, uint32_t notes)
+static void rt_draw_header(void)
 {
-    (void)pressed;
-    if(roto_in_editor) return 0;
+    uint16_t col = RT_TRK_COL[rt_sn.sel];
+    char buf[16];
+    int32_t x, t;
+    static const char *RT_DIV[5] = {"1/16", "1/16", "1/8", "3/16", "1/4"};
 
-    /* White keys toggle steps on the active ring */
-    if(notes){
-        uint32_t s;
-        uint32_t sel  = (uint32_t)roto.sel;
-        uint32_t maxs = (uint32_t)roto.trk[sel].len;
-        if(maxs > 16u) maxs = 16u;
-        for(s = 0; s < maxs; s++){
-            if((notes >> s) & 1u)
-                roto_step_toggle(sel, s);
+    buf[0] = (char)('1' + rt_sn.sel); buf[1] = 0;
+    x = rt_text_b(4, 4, buf, 1, col);
+    x = rt_text_b(x + 6, 4, "RING", 1, col);
+    rt_text_s(x + 8, 8, RT_DIV[rt_sn.div <= 4 ? rt_sn.div : 1], RT_TEXT);
+
+    rt_fmt_u(buf, rt_sn.bpm);
+    { uint32_t n = rt_strlen(buf); buf[n] = ' '; buf[n+1] = 'B'; buf[n+2] = 'P'; buf[n+3] = 'M'; buf[n+4] = 0; }
+    rt_text_s(RT_BPM_X1 - RT_TEXT_S_W(buf), 8, buf, RT_GREY);
+
+    for (t = 0; t < ROTO_TRACKS; t++) {
+        int32_t bx = RT_BOX_X + t * RT_BOX_W;
+        uint16_t tc = RT_TRK_COL[t];
+        char d[2] = {(char)('1' + t), 0};
+        if (t == (int32_t)rt_sn.sel) {
+            rt_rect(bx, 5, bx + 9, 16, tc);
+            rt_text_s(bx + 2, 7, d, RT_BG);
+        } else {
+            rt_hspan(bx, bx + 9, 5, tc);
+            rt_hspan(bx, bx + 9, 15, tc);
+            rt_rect(bx, 5, bx + 1, 16, tc);
+            rt_rect(bx + 8, 5, bx + 9, 16, tc);
+            rt_text_s(bx + 2, 7, d, tc);
         }
-        return 1;
     }
-
-    return 1;   /* roto owns the screen — eat all input */
+    rt_rect(4, RT_RULE_Y, 236, RT_RULE_Y + 2, RT_RULE);
 }
 
-/* ---------------------------------------------------------------- draw dispatch */
-int roto_ui_draw(void)
+static void rt_draw_ring(void)
 {
-    if(roto_in_editor) return 0;
-    draw_ring_screen();
+    uint16_t col = RT_TRK_COL[rt_sn.sel];
+    uint32_t n = rt_sn.len, s;
+    int32_t x, y, fx = 0, fy = 0, px = 0, py = 0, have = 0;
+    char buf[8];
+
+    rt_circle(RT_CX, RT_CY, RT_R, RT_TRK_RING[rt_sn.sel]);
+
+    /* grey lines joining the on steps, in order, closed */
+    for (s = 0; s < n; s++) {
+        if (!rt_sn.on[s]) continue;
+        rt_polar(rt_step_angle(s, n), RT_R, &x, &y);
+        if (have) rt_line(px, py, x, y, RT_LINE);
+        else { fx = x; fy = y; }
+        px = x; py = y; have++;
+    }
+    if (have > 2) rt_line(px, py, fx, fy, RT_LINE);
+
+    /* centre: hits, "OF n" */
+    rt_fmt_u(buf, rt_sn.hits);
+    rt_text_b(RT_CX - (int32_t)rt_strlen(buf) * 8, RT_CY - 18, buf, 2, RT_TEXT);
+    {
+        char of[10] = "OF ";
+        rt_fmt_u(of + 3, n);
+        rt_text_s(RT_CX - RT_TEXT_S_W(of) / 2, RT_CY + 10, of, RT_GREY);
+    }
+
+    /* steps */
+    for (s = 0; s < n; s++) {
+        int32_t a = rt_step_angle(s, n);
+        rt_polar(a, RT_R, &x, &y);
+        if (rt_sn.on[s]) {
+            int32_t lx, ly;
+            rt_diamond_fill(x, y, 3, RT_BG);
+            rt_diamond_line(x, y, 4, col);
+            rt_px(x, y, col);
+            rt_note_name(buf, RT_ROOT_NOTE + rt_sn.note[s]);
+            rt_polar(a, RT_R_LABEL, &lx, &ly);
+            rt_text_s(lx - RT_TEXT_S_W(buf) / 2, ly - 3, buf, RT_GREY);
+        } else {
+            rt_rect(x, y, x + 2, y + 2, RT_DOT);
+        }
+    }
+
+    /* playhead: three pink dots trailing it inside the ring, then the head */
+    {
+        int32_t a = rt_step_angle(rt_sn.pos, n), k;
+        for (k = 1; k <= 3; k++) {
+            rt_polar(a - k * 9, RT_R - 9, &x, &y);
+            rt_rect(x, y, x + 2, y + 2, RT_PINK);
+        }
+        rt_polar(a, RT_R, &x, &y);
+        rt_circle(x, y, 7, RT_GREY);
+        rt_diamond_fill(x, y, 4, col);
+    }
+}
+
+static void rt_draw_scene(void)
+{
+    rt_draw_header();
+    rt_draw_ring();
+}
+
+/* clear a box and draw the scene clipped to it */
+static void rt_repaint(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+{
+    rt_clip_set(x0, y0, x1, y1);
+    rt_rect(x0, y0, x1, y1, RT_BG);
+    rt_draw_scene();
+    rt_clip_all();
+}
+
+/* the box the playhead (and its trail) covers at step pos */
+static void rt_playhead_box(uint32_t pos, uint32_t n, int32_t *x0, int32_t *y0, int32_t *x1, int32_t *y1)
+{
+    int32_t a = rt_step_angle(pos, n), x, y, k;
+    rt_polar(a, RT_R, &x, &y);
+    *x0 = x - 9; *y0 = y - 9; *x1 = x + 10; *y1 = y + 10;
+    for (k = 1; k <= 3; k++) {
+        rt_polar(a - k * 9, RT_R - 9, &x, &y);
+        if (x - 1 < *x0) *x0 = x - 1;
+        if (y - 1 < *y0) *y0 = y - 1;
+        if (x + 3 > *x1) *x1 = x + 3;
+        if (y + 3 > *y1) *y1 = y + 3;
+    }
+}
+
+/* ------------------------------------------------------------- state */
+static uint8_t roto_in_editor = 0;
+static uint8_t rt_shown = 0;               /* 0: nothing of ours on screen yet */
+static uint32_t rt_shown_sig;              /* track, length, steps, rate */
+static uint8_t rt_shown_pos, rt_shown_bpm;
+
+static uint32_t rt_scene_sig(void)
+{
+    uint32_t h = 2166136261u, s;
+    h = (h ^ rt_sn.sel) * 16777619u;
+    h = (h ^ rt_sn.len) * 16777619u;
+    h = (h ^ rt_sn.div) * 16777619u;
+    for (s = 0; s < rt_sn.len; s++)
+        h = (h ^ (uint32_t)(rt_sn.on[s] | (rt_sn.note[s] << 1))) * 16777619u;
+    return h;
+}
+
+int roto_ui_draw(int force)
+{
+    uint32_t sig;
+    if (roto_in_editor) { rt_shown = 0; return 0; }
+
+    rt_snapshot();
+    sig = rt_scene_sig();
+    rt_clip_all();
+
+    if (force || !rt_shown || sig != rt_shown_sig) {
+        rt_rect(0, 0, RT_W, RT_H, RT_BG);
+        rt_draw_scene();
+    } else {
+        if (rt_sn.bpm != rt_shown_bpm)
+            rt_repaint(RT_BPM_X1 - 50, 4, RT_BPM_X1 + 1, 17);
+        if (rt_sn.pos != rt_shown_pos) {
+            int32_t x0, y0, x1, y1;
+            rt_playhead_box(rt_shown_pos < rt_sn.len ? rt_shown_pos : 0, rt_sn.len, &x0, &y0, &x1, &y1);
+            rt_repaint(x0, y0, x1, y1);
+            rt_playhead_box(rt_sn.pos, rt_sn.len, &x0, &y0, &x1, &y1);
+            rt_repaint(x0, y0, x1, y1);
+        }
+    }
+    rt_shown = 1;
+    rt_shown_sig = sig;
+    rt_shown_pos = rt_sn.pos;
+    rt_shown_bpm = rt_sn.bpm;
     return 1;
 }
 
-/* ---------------------------------------------------------------- audio level hook */
+/* ------------------------------------------------------------- input
+ * (stage 3 will rework the controls; this keeps the step keys working) */
+int roto_ui_input(uint32_t pressed, uint32_t notes)
+{
+    (void)pressed;
+    if (roto_in_editor) return 0;
+    if (notes) {
+        uint32_t s, sel = (uint32_t)roto.sel;
+        uint32_t maxs = (uint32_t)roto.trk[sel].len;
+        if (maxs > 16u) maxs = 16u;
+        for (s = 0; s < maxs; s++)
+            if ((notes >> s) & 1u) roto_step_toggle(sel, s);
+    }
+    return 1;
+}
+
 void roto_ui_audio_level(uint8_t level)
 {
-    (void)level;   /* reserved for future VU animation */
+    (void)level;
 }
