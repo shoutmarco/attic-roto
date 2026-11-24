@@ -103,6 +103,7 @@ static __attribute__((noinline)) int c1_wait(void) { return fm1_cpu1_wait(); }  
 #endif
 #include "song_chain.c"
 #include "seq.c"
+#include "roto_seq.c"            /* attic-roto: ring sequencer state and tick */
 #include "audio.c"
 
 /* -------------------------------------------------------------- UI --- */
@@ -111,6 +112,7 @@ static __attribute__((noinline)) int c1_wait(void) { return fm1_cpu1_wait(); }  
 #include "menu_items.c"          /* MENU's rows and settings (ui_menu.c, editor_menu.c) */
 #include "icons.c"               /* parameter icons (FELUCCA_ICONS), used by ui_draw.c */
 #include "ui_graph.c"
+#include "roto_ui.c"             /* attic-roto: ring sequencer drawing and input */
 #include "ui_draw.c"
 #include "ui_menu.c"
 #include "ui_input.c"

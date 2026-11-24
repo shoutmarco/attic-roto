@@ -1548,6 +1548,7 @@ static void ui_notices(void)
 static void ui_input(void)
 {
     uint32_t pressed = fm1_input_edges(0), notes = fm1_input_note_edges(), now = fm1_ticks(), id, b, k;
+    if (roto_ui_input(pressed, notes)) return;            /* attic-roto: ring sequencer input (owns HOME/PLAY/SEQ/keys) */
     uint32_t home, rec, save;
     uint32_t oct;
     uint32_t lay, combo = 0, lytap, lkeys, glo, kq = 0;

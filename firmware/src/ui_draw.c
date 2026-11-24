@@ -1626,6 +1626,7 @@ static void ui_draw(void)
 }
 static void ui_draw_page(uint32_t counting)
 {
+    roto_ui_draw();                                       /* attic-roto: ring sequencer / home screen */
     if (ui.uboot) {
         draw_uboot();
         draw_head();

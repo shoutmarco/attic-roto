@@ -57,4 +57,9 @@ void roto_stop(void);
  * to trigger the voice on that track */
 void roto_note_on(uint32_t trk, uint8_t note);
 
+/* UI hooks — implemented in roto_ui.c, called from ui_input.c / ui_draw.c */
+int  roto_ui_input(uint32_t pressed, uint32_t notes);
+void roto_ui_draw(void);
+void roto_ui_audio_level(uint8_t level);
+
 #endif /* ROTO_SEQ_H */

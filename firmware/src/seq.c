@@ -13,6 +13,16 @@
  * held length as TIE steps (rec_note, rec_hold, rec_release). With the ARP on, the notes the arp
  * plays are recorded, not the keys held (what plays back is what was heard). A key or MIDI note plays a
  * chord when the track's CHRD is on (chord.c): its notes go through the same input as so many keys. */
+#include "roto_seq.h"
+
+/* roto_note_on: called from roto_seq_tick (audio ISR) when a ring step fires.
+ * Routes into Felucca's trk_note_on so the voice on that track sounds. */
+void roto_note_on(uint32_t t, uint8_t note)
+{
+    if (t >= NTRK) return;
+    trk_note_on(&trk[t], (uint32_t)note + (uint32_t)trk[t].p[P_ROOT], 100);
+}
+
 static const uint16_t SCALE_MASK[] = {
     0xFFF,                                   /* CHR */
     (1 << 0) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 7) | (1 << 9) | (1 << 11),   /* MAJ */
@@ -1483,6 +1493,7 @@ static void events_block(uint32_t n)
     chain_tick(clock_mode && chain.running ? midi_seq_preview(&trk[chain.clk], seq_n) : seq_n);
     for (i = 0; i < NTRK; i++)
         seq_tick(&trk[i], seq_n);
+    roto_seq_tick(seq_n, FS);   /* attic-roto: advance ring sequencers */
     if (cin_flush)
         cin_record();
     if (song.playing)
