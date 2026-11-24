@@ -391,38 +391,65 @@ static void rt_playhead_box(uint32_t pos, uint32_t n, int32_t *x0, int32_t *y0, 
 /* ------------------------------------------------------------- state */
 static uint8_t roto_in_editor = 0;
 static uint8_t rt_shown = 0;               /* 0: nothing of ours on screen yet */
-static uint32_t rt_shown_sig;              /* track, length, steps, rate */
-static uint8_t rt_shown_pos, rt_shown_bpm;
+static uint32_t rt_shown_head, rt_shown_ring;   /* what the header / the ring showed */
+static uint8_t rt_shown_pos, rt_shown_bpm, rt_shown_sel;
 
-static uint32_t rt_scene_sig(void)
+#define RT_BAND 8                           /* rows per strip when a big area changes */
+#define RT_HEAD_Y1 (RT_RULE_Y + 2)          /* the header: rows 0 .. RT_HEAD_Y1 - 1 */
+
+static uint32_t rt_fnv(uint32_t h, uint32_t v) { return (h ^ v) * 16777619u; }
+
+/* the header: track, rate, the sound's name (the BPM has its own repaint) */
+static uint32_t rt_head_sig(void)
 {
     uint32_t h = 2166136261u, s;
-    h = (h ^ rt_sn.sel) * 16777619u;
-    h = (h ^ rt_sn.len) * 16777619u;
-    h = (h ^ rt_sn.div) * 16777619u;
+    h = rt_fnv(h, rt_sn.sel);
+    h = rt_fnv(h, rt_sn.div);
     for (s = 0; s < sizeof roto.snd[0].name && roto.snd[rt_sn.sel].name[s]; s++)
-        h = (h ^ (uint8_t)roto.snd[rt_sn.sel].name[s]) * 16777619u;
-    for (s = 0; s < rt_sn.len; s++)
-        h = (h ^ (uint32_t)(rt_sn.on[s] | (rt_sn.note[s] << 1))) * 16777619u;
+        h = rt_fnv(h, (uint8_t)roto.snd[rt_sn.sel].name[s]);
     return h;
+}
+
+/* the ring: track, length, the steps and their notes */
+static uint32_t rt_ring_sig(void)
+{
+    uint32_t h = 2166136261u, s;
+    h = rt_fnv(h, rt_sn.sel);
+    h = rt_fnv(h, rt_sn.len);
+    for (s = 0; s < rt_sn.len; s++)
+        h = rt_fnv(h, (uint32_t)(rt_sn.on[s] | (rt_sn.note[s] << 1)));
+    return h;
+}
+
+/* repaint rows y0..y1 a strip at a time: each strip is blank only while it is
+ * drawn, never the whole area at once (no flash when a knob changes the layout) */
+static void rt_repaint_rows(int32_t y0, int32_t y1)
+{
+    int32_t y;
+    for (y = y0; y < y1; y += RT_BAND)
+        rt_repaint(0, y, RT_W, y + RT_BAND < y1 ? y + RT_BAND : y1);
 }
 
 int roto_ui_draw(int force)
 {
-    uint32_t sig;
+    uint32_t head, ring;
     if (roto_in_editor) { rt_shown = 0; return 0; }
 
     rt_snapshot();
-    sig = rt_scene_sig();
+    head = rt_head_sig();
+    ring = rt_ring_sig();
     rt_clip_all();
 
-    if (force || !rt_shown || sig != rt_shown_sig) {
-        rt_rect(0, 0, RT_W, RT_H, RT_BG);
-        rt_draw_scene();
+    if (force || !rt_shown || rt_sn.sel != rt_shown_sel) {
+        rt_repaint_rows(0, RT_H);                       /* everything (another track, or the screen was someone else's) */
     } else {
-        if (rt_sn.bpm != rt_shown_bpm)
+        if (ring != rt_shown_ring)
+            rt_repaint_rows(RT_HEAD_Y1, RT_H);          /* the ring only (K3, a step key) */
+        if (head != rt_shown_head)
+            rt_repaint_rows(0, RT_HEAD_Y1);             /* the header only (K4) */
+        else if (rt_sn.bpm != rt_shown_bpm)
             rt_repaint(RT_BPM_X1 - 50, 4, RT_BPM_X1 + 1, 17);
-        if (rt_sn.pos != rt_shown_pos) {
+        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos) {
             int32_t x0, y0, x1, y1;
             rt_playhead_box(rt_shown_pos < rt_sn.len ? rt_shown_pos : 0, rt_sn.len, &x0, &y0, &x1, &y1);
             rt_repaint(x0, y0, x1, y1);
@@ -431,9 +458,11 @@ int roto_ui_draw(int force)
         }
     }
     rt_shown = 1;
-    rt_shown_sig = sig;
+    rt_shown_head = head;
+    rt_shown_ring = ring;
     rt_shown_pos = rt_sn.pos;
     rt_shown_bpm = rt_sn.bpm;
+    rt_shown_sel = rt_sn.sel;
     return 1;
 }
 
