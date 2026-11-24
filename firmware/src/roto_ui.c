@@ -138,55 +138,103 @@ static void roto_ring(int32_t cx, int32_t cy, int32_t r, uint16_t c)
     }
 }
 
+/* ---------------------------------------------------------- diamond marker */
+/* Draw a small axis-aligned diamond (rotated square) centred at (x,y), half-size r */
+static void roto_diamond(int32_t x, int32_t y, int32_t r, uint16_t c)
+{
+    int32_t i;
+    for (i = 0; i <= r; i++) {
+        int32_t w = r - i;
+        roto_pixel(x - w, y - i, c); roto_pixel(x + w, y - i, c);
+        roto_pixel(x - w, y + i, c); roto_pixel(x + w, y + i, c);
+    }
+}
+
 /* ---------------------------------------------------------- ring screen */
+/* Layout (reference: circular arp UI):
+ *   Outer ring (r=90): thin, track colour — step positions live here
+ *   Inner ring (r=58): thin, dimmed — visual depth / inner boundary
+ *   Step markers: small diamond on outer ring; active = bright, inactive = dim
+ *   Playhead: large diamond on outer ring, white, + radial spoke from centre
+ *   Note labels: 2-char string just outside outer ring at each active step
+ *   Top-left: track number "T1"  Top-right: step count "16S"
+ *   Centre: small crosshair dot
+ */
 static void draw_ring_screen(void)
 {
     uint32_t sel = (uint32_t)roto.sel;
     roto_track_t *k = &roto.trk[sel];
-    uint16_t col = TRK_COL[sel];
+    uint16_t col  = TRK_COL[sel];
+    uint16_t dim  = TRK_DIM[sel];
     uint32_t s;
-    int32_t r = RING_R_FULL;
+    int32_t  R    = RING_R_FULL;      /* outer ring radius */
+    int32_t  Ri   = R * 58 / 90;     /* inner ring radius (~58 when R=90) */
 
-    /* background cleared by cv_begin() in roto_ui_draw() */
+    /* inner ring — dimmed */
+    roto_ring(CX, CY, Ri, dim);
 
-    /* the ring */
-    roto_ring(CX, CY, r, col);
+    /* outer ring — track colour */
+    roto_ring(CX, CY, R, col);
 
-    /* playhead line + tip dot */
-    if (roto.running) {
-        int32_t px, py;
-        ring_dot(r, (uint32_t)k->pos, (uint32_t)k->len, &px, &py);
-        roto_line(CX, CY, px, py, col);
-        roto_dot(px, py, COL_WHITE);
-    }
+    /* centre crosshair */
+    roto_pixel(CX,     CY,     COL_WHITE);
+    roto_pixel(CX - 1, CY,     dim);
+    roto_pixel(CX + 1, CY,     dim);
+    roto_pixel(CX,     CY - 1, dim);
+    roto_pixel(CX,     CY + 1, dim);
 
-    /* step dots */
-    for (s = 0; s < (uint32_t)k->len; s++) {
-        int32_t dx2, dy2;
-        ring_dot(r, s, (uint32_t)k->len, &dx2, &dy2);
-        roto_dot(dx2, dy2, k->step[s].on ? col : TRK_DIM[sel]);
-    }
-
-    /* track label + step count — top left in AF_S */
+    /* step markers + note labels */
     {
-        char buf[10];
-        uint8_t l = k->len;
-        buf[0] = 'T'; buf[1] = (char)('1' + (char)sel);
-        buf[2] = ' ';
-        buf[3] = (char)('0' + l / 10);
-        buf[4] = (char)('0' + l % 10);
-        buf[5] = 'S'; buf[6] = 0;
-        cv_text(4, 4, &AF_S, buf, col);
-    }
+        /* note names, chromatic from C */
+        static const char NOTE_NAME[12][3] = {
+            "C ","C#","D ","D#","E ","F ","F#","G ","G#","A ","A#","B "
+        };
+        for (s = 0; s < (uint32_t)k->len; s++) {
+            int32_t sx, sy;
+            ring_dot(R, s, (uint32_t)k->len, &sx, &sy);
 
-    /* 4 small track-indicator squares, bottom right */
-    {
-        uint32_t t;
-        for (t = 0; t < ROTO_TRACKS; t++) {
-            uint16_t ic = (t == sel) ? TRK_COL[t] : TRK_DIM[t];
-            int32_t bx = (int32_t)((uint32_t)SCR_W - 28u + t * 7u);
-            cv_rect(bx, (int32_t)SCR_H - 10, 5, 5, ic);
+            int32_t is_on = k->step[s].on ? 1 : 0;
+            uint16_t mc = is_on ? col : dim;
+
+            /* small diamond on the ring */
+            roto_diamond(sx, sy, 2, mc);
+
+            /* note label just outside the ring for active steps */
+            if (is_on) {
+                /* position label radially outward by 10 px */
+                int32_t a = (int32_t)((s * 256u) / (uint32_t)k->len + 192u) & 255;
+                int32_t lx = CX + (icos(a) * (R + 10)) / 256 - 4;
+                int32_t ly = CY + (isin(a) * (R + 10)) / 256 - 4;
+                uint8_t note = k->step[s].note % 12u;
+                cv_text(lx, ly, &AF_S, NOTE_NAME[note], col);
+            }
         }
+    }
+
+    /* playhead: radial spoke + large diamond on outer ring */
+    {
+        int32_t px, py;
+        ring_dot(R, (uint32_t)k->pos, (uint32_t)k->len, &px, &py);
+        /* spoke from centre to ring */
+        roto_line(CX, CY, px, py, dim);
+        /* large diamond at playhead position */
+        roto_diamond(px, py, 5, COL_WHITE);
+    }
+
+    /* track label top-left */
+    {
+        char buf[3] = {'T', (char)('1' + (char)sel), 0};
+        cv_text(6, 6, &AF_S, buf, col);
+    }
+
+    /* step count top-right */
+    {
+        char buf[5];
+        uint8_t l = k->len;
+        buf[0] = (char)('0' + l / 10);
+        buf[1] = (char)('0' + l % 10);
+        buf[2] = 'S'; buf[3] = 0;
+        cv_text((int32_t)SCR_W - 24, 6, &AF_S, buf, dim);
     }
 }
 
