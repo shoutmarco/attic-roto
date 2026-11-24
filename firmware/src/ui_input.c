@@ -1559,6 +1559,7 @@ static void ui_input(void)
             if (bpm <  40) bpm =  40;
             if (bpm > 240) bpm = 240;
             roto.bpm = (uint8_t)bpm;
+            song.g[G_BPM] = (int16_t)bpm;              /* (the delay follows the tempo) */
         }
         if ((v = panel_enc(EN_K2)) != 0) {
             int32_t sel2 = ((int32_t)roto.sel + v + ROTO_TRACKS) % ROTO_TRACKS;

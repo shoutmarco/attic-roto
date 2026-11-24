@@ -1,63 +1,83 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * attic-roto: ring sequencer for four independent tracks.
- * Each track is a circular sequence of 1..64 steps. Steps are on or off;
- * each on-step fires a note_on on its track. The four tracks share one
- * transport (BPM, running) but each loops independently on its own length
- * (polymeter). */
+ * Each track is a circular sequence of 1..64 steps. Each on-step plays a note
+ * (or a chord) on its track for a set gate length. The four tracks share one
+ * transport (BPM, running) but each loops on its own length (polymeter).
+ *
+ * At power-on roto_seq_generate() makes a new random pattern in the style of
+ * Andrew Weatherall (drums, a drifting bassline, dub chord stabs, blips) and
+ * chooses a sound for each track (roto.snd[], applied by main.c). */
 #ifndef ROTO_SEQ_H
 #define ROTO_SEQ_H
 #include <stdint.h>
 
 #define ROTO_TRACKS  4
 #define ROTO_STEPS  64    /* max steps per ring */
+#define ROTO_CHORD   3    /* extra chord notes per step */
+#define ROTO_POS_START 0xFFu   /* pos before the first step after PLAY */
 
-/* One step: on/off and a note (0 = root) */
 typedef struct {
     uint8_t on;
-    uint8_t note;   /* semitone offset from track root, 0..127 */
+    uint8_t note;   /* MIDI note 0..127 */
+    uint8_t vel;    /* 1..127 */
 } roto_step_t;
 
-/* One track's sequencer state */
 typedef struct {
     roto_step_t step[ROTO_STEPS];
     uint8_t  len;        /* active steps: 1..ROTO_STEPS */
-    uint8_t  pos;        /* current playhead position 0..len-1 */
-    uint8_t  div;        /* clock divisions per step: 1=1/16, 2=1/8, 4=1/4 */
-    uint8_t  _pad;
-    uint32_t acc;        /* accumulated clock ticks toward the next step */
+    uint8_t  pos;        /* playhead 0..len-1 (ROTO_POS_START before the first step) */
+    uint8_t  div;        /* sixteenths per step: 1 = 1/16, 2 = 1/8, 4 = 1/4 */
+    uint8_t  gate;       /* note length, percent of a step (1..100) */
+    int8_t   chord[ROTO_CHORD];   /* semitones above the step's note, 0 = none */
+    uint8_t  nheld;      /* audio side: notes sounding now */
+    uint8_t  held[1 + ROTO_CHORD];
+    uint32_t acc;        /* samples into the current step */
+    uint32_t gate_left;  /* samples until the held notes are released */
 } roto_track_t;
 
-/* Global sequencer */
+/* the sound a track gets at power-on (applied by main.c roto_boot_sounds) */
+typedef struct {
+    uint8_t eng, preset;
+    uint8_t level, dly, rev, chor;
+    int8_t  pan;
+    char    name[12];    /* the preset's name, filled in when applied */
+} roto_sound_t;
+
 typedef struct {
     roto_track_t trk[ROTO_TRACKS];
+    roto_sound_t snd[ROTO_TRACKS];
     uint8_t  running;
     uint8_t  bpm;        /* 40..240 */
-    uint8_t  sel;        /* selected / active track 0..3 */
-    uint8_t  _pad;
+    uint8_t  sel;        /* selected track 0..3 */
+    uint8_t  root;       /* pitch class 0..11 of the generated key */
+    uint8_t  mode;       /* 0 aeolian, 1 dorian, 2 phrygian */
+    uint8_t  dtime, dfdbk;   /* the delay the pattern was made for (song.g G_DTIME / G_DFDBK) */
+    uint32_t seed;
 } roto_seq_t;
 
 extern roto_seq_t roto;
 
-/* Call once at boot */
+/* boot: everything empty and stopped */
 void roto_seq_init(void);
+/* a new random Weatherall-style pattern and sound plan from seed (stopped: set the sounds, then roto_play) */
+void roto_seq_generate(uint32_t seed);
 
-/* Call from the audio ISR, once per sample block.
- * fires note_on(track, note) for every step that triggers this block. */
+/* audio side, once per sample block */
 void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate);
 
-/* Step editing */
+/* editing (UI side) */
 void roto_step_toggle(uint32_t trk, uint32_t step);
 void roto_len_set(uint32_t trk, uint32_t len);
 
-/* Transport */
+/* transport (UI side; the audio side releases notes after a stop) */
 void roto_play(void);
 void roto_stop(void);
 
-/* Called by roto_seq_tick when a step fires — implemented in seq.c / audio.c
- * to trigger the voice on that track */
-void roto_note_on(uint32_t trk, uint8_t note);
+/* the voice side (seq.c) */
+void roto_note_on(uint32_t trk, uint8_t note, uint8_t vel);
+void roto_note_off(uint32_t trk, uint8_t note);
 
-/* UI hooks — implemented in roto_ui.c, called from ui_input.c / ui_draw.c */
+/* UI hooks (roto_ui.c), called from ui_input.c / ui_draw.c */
 int  roto_ui_input(uint32_t pressed, uint32_t notes);
 int  roto_ui_draw(int force);   /* returns 1 if the screen is ours (caller skips Felucca drawing); force: redraw everything */
 void roto_ui_audio_level(uint8_t level);

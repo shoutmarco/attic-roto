@@ -241,7 +241,6 @@ static void rt_note_name(char *out, uint32_t midi)
 }
 
 /* ------------------------------------------------------------- scene */
-#define RT_ROOT_NOTE 48u       /* display root: C3 */
 
 /* what this frame draws (snapshotted once; the audio side keeps moving) */
 static struct {
@@ -276,7 +275,7 @@ static void rt_draw_header(void)
 
     buf[0] = (char)('1' + rt_sn.sel); buf[1] = 0;
     x = rt_text_b(4, 4, buf, 1, col);
-    x = rt_text_b(x + 6, 4, "RING", 1, col);
+    x = rt_text_b(x + 6, 4, roto.snd[rt_sn.sel].name[0] ? roto.snd[rt_sn.sel].name : "RING", 1, col);
     rt_text_s(x + 8, 8, RT_DIV[rt_sn.div <= 4 ? rt_sn.div : 1], RT_TEXT);
 
     rt_fmt_u(buf, rt_sn.bpm);
@@ -338,7 +337,7 @@ static void rt_draw_ring(void)
             rt_diamond_fill(x, y, 3, RT_BG);
             rt_diamond_line(x, y, 4, col);
             rt_px(x, y, col);
-            rt_note_name(buf, RT_ROOT_NOTE + rt_sn.note[s]);
+            rt_note_name(buf, rt_sn.note[s]);
             rt_polar(a, RT_R_LABEL, &lx, &ly);
             rt_text_s(lx - RT_TEXT_S_W(buf) / 2, ly - 3, buf, RT_GREY);
         } else {
@@ -401,6 +400,8 @@ static uint32_t rt_scene_sig(void)
     h = (h ^ rt_sn.sel) * 16777619u;
     h = (h ^ rt_sn.len) * 16777619u;
     h = (h ^ rt_sn.div) * 16777619u;
+    for (s = 0; s < sizeof roto.snd[0].name && roto.snd[rt_sn.sel].name[s]; s++)
+        h = (h ^ (uint8_t)roto.snd[rt_sn.sel].name[s]) * 16777619u;
     for (s = 0; s < rt_sn.len; s++)
         h = (h ^ (uint32_t)(rt_sn.on[s] | (rt_sn.note[s] << 1))) * 16777619u;
     return h;

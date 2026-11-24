@@ -98,6 +98,43 @@ static void boot_leds(void)
         fm1_led_anim_start(settings_leds == LEDS_DIM || settings_leds == LEDS_DIM_LO);
 }
 
+/* attic-roto: a new random pattern at every power-on, with its sounds.
+ * After the last session is restored (autosave_boot), so these win. The seed
+ * mixes the timer with the .noinit debug block (left over from the last run,
+ * or whatever the RAM held at power-on). */
+static void roto_boot(void)
+{
+    const uint32_t *w = (const uint32_t *)(const void *)&felucca_dbg;
+    uint32_t seed = fm1_ticks() * 2654435761u, i, t;
+    for (i = 0; i < (uint32_t)(sizeof felucca_dbg / 4u); i++)
+        seed = (seed ^ w[i]) * 16777619u;
+    seed ^= fm1_ms * 0x85EBCA6Bu;
+    roto_seq_generate(seed);
+    for (t = 0; t < ROTO_TRACKS && t < NTRK; t++) {
+        track_t *tk = &trk[t];
+        roto_sound_t *sd = &roto.snd[t];
+        const engine_t *e;
+        const char *nm;
+        set_engine_of(tk, sd->eng);
+        apply_preset_to(tk, sd->preset);
+        tk->p[P_LEVEL] = sd->level;
+        tk->p[P_MUTE] = 0;
+        tk->p[P_PAN] = sd->pan;
+        tk->p[P_DLY] = sd->dly;
+        tk->p[P_REV] = sd->rev;
+        tk->p[P_CHOR] = sd->chor;
+        e = ENGINES[tk->eng_req % NENGINES];
+        nm = e->npresets ? e->presets[tk->preset % e->npresets].name : e->name;
+        for (i = 0; i + 1u < sizeof sd->name && nm[i]; i++)
+            sd->name[i] = nm[i];
+        sd->name[i] = 0;
+    }
+    song.g[G_BPM] = roto.bpm;                 /* (the delay follows the tempo) */
+    song.g[G_DTIME] = roto.dtime;
+    song.g[G_DFDBK] = roto.dfdbk;
+    roto_play();
+}
+
 static void fm1_main(void)
 {
     uint32_t ms;
@@ -130,7 +167,7 @@ static void fm1_main(void)
     fm1_adc_init();
     panel_init();
     felucca_init();
-    roto_seq_init();             /* attic-roto: seed default ring patterns */
+    roto_seq_init();             /* attic-roto: rings empty and stopped (roto_boot makes the pattern) */
     master_boot();
     kb_boot_hold = 1;                         /* #137: no notes from the keys before the UI (seq.c keyboard_block) */
 #if FELUCCA_CPU2
@@ -161,6 +198,7 @@ static void fm1_main(void)
         fm1_delay_ms(10);
         master_poll();
     }
+    roto_boot();                              /* attic-roto: a new pattern and its sounds, playing */
     kb_boot_hold = 0;
     lcd_fill(0, 0, 240, 240, T_BG);
     scrn.idle = fm1_ms;                        /* (MENU > SCREEN OFF: from here) */

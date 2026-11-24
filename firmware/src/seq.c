@@ -15,12 +15,18 @@
  * chord when the track's CHRD is on (chord.c): its notes go through the same input as so many keys. */
 #include "roto_seq.h"
 
-/* roto_note_on: called from roto_seq_tick (audio ISR) when a ring step fires.
- * Routes into Felucca's trk_note_on so the voice on that track sounds. */
-void roto_note_on(uint32_t t, uint8_t note)
+/* attic-roto: called from roto_seq_tick (audio ISR). The ring's notes are MIDI
+ * notes as they are; every note on gets its note off after the step's gate. */
+void roto_note_on(uint32_t t, uint8_t note, uint8_t vel)
 {
     if (t >= NTRK) return;
-    trk_note_on(&trk[t], (uint32_t)note + (uint32_t)trk[t].p[P_ROOT], 100);
+    trk_note_on(&trk[t], note, vel);
+}
+
+void roto_note_off(uint32_t t, uint8_t note)
+{
+    if (t >= NTRK) return;
+    trk_note_off(&trk[t], note);
 }
 
 static const uint16_t SCALE_MASK[] = {
