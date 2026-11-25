@@ -72,15 +72,19 @@ typedef struct {
     uint8_t  throw_left; /* 1/16s until it ends */
     uint32_t ev_rs;      /* EVOLVE's dice */
     uint8_t  env[ROTO_TRACKS][4];   /* each ring's sound's envelope, A D S R 0..127 (a copy of the track's P_ATK..P_REL, for the screen) */
+    int8_t   flt[ROTO_TRACKS][4];   /* FILTER, for the screen, K1..K4: bright, edge 0..100, env -100..100, drive 0..100 (-128: the sound has none) */
+    char     flt_lbl[ROTO_TRACKS][4][6];   /* the sound's own names for them ("CUT", "RES", ...) */
 } roto_seq_t;
 
 #define ROTO_VIEW_RING   0
 #define ROTO_VIEW_EUCLID 1
 #define ROTO_VIEW_ENV    2
+#define ROTO_VIEW_FLT    3
 
 /* what a knob just changed, for roto_ui_show() (the centre shows it for a moment) */
 enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_SHOW_RATE, ROTO_SHOW_PROB, ROTO_SHOW_BPM,
-       ROTO_SHOW_ATK, ROTO_SHOW_DEC, ROTO_SHOW_SUS, ROTO_SHOW_REL };
+       ROTO_SHOW_ATK, ROTO_SHOW_DEC, ROTO_SHOW_SUS, ROTO_SHOW_REL,
+       ROTO_SHOW_BRIGHT, ROTO_SHOW_EDGE, ROTO_SHOW_FENV, ROTO_SHOW_DRIVE };
 
 extern roto_seq_t roto;
 
@@ -98,6 +102,10 @@ void roto_len_set(uint32_t trk, uint32_t len);
 void roto_fill(uint32_t trk, int32_t dir);     /* one hit more (dir > 0) or fewer, spread evenly, notes kept */
 void roto_rotate(uint32_t trk, int32_t dir);   /* spin the pattern one step later (dir > 0) or earlier */
 void roto_euclid(uint32_t trk, uint32_t hits); /* exactly `hits` hits, spread evenly (Euclidean), turned by rot; notes kept */
+
+/* FILTER: for a sound engine (engines.c numbering), which of its 8 edit settings is BRIGHT, EDGE
+ * and DRIVE (0xFF: none), and whether it follows the envelope-to-filter amount (P_ED_FLT) */
+void roto_tone_map(uint32_t eng, uint8_t out[3], int *has_env);
 
 /* transport (UI side; the audio side releases notes after a stop) */
 void roto_play(void);

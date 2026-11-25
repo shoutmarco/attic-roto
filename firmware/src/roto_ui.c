@@ -253,6 +253,8 @@ static void rt_note_name(char *out, uint32_t midi)
 static struct {
     uint8_t sel, len, pos, div, bpm, hits, view, rot, prob, show;
     uint8_t env[4];
+    int8_t flt[4];
+    char flt_lbl[4][6];
     uint8_t on[ROTO_STEPS];
     uint8_t note[ROTO_STEPS];
     uint8_t ghost[ROTO_STEPS];
@@ -271,6 +273,14 @@ static void rt_snapshot(void)
     rt_sn.rot = k->rot;
     rt_sn.prob = k->prob;
     { uint32_t e; for (e = 0; e < 4u; e++) rt_sn.env[e] = (uint8_t)(roto.env[rt_sn.sel][e] & 127u); }
+    {
+        uint32_t e, c;
+        for (e = 0; e < 4u; e++) {
+            rt_sn.flt[e] = roto.flt[rt_sn.sel][e];
+            for (c = 0; c < 5u && roto.flt_lbl[rt_sn.sel][e][c]; c++) rt_sn.flt_lbl[e][c] = roto.flt_lbl[rt_sn.sel][e][c];
+            rt_sn.flt_lbl[e][c] = 0;
+        }
+    }
     rt_sn.hits = 0;
     for (s = 0; s < ROTO_STEPS; s++) {
         rt_sn.on[s] = (uint8_t)(s < rt_sn.len && k->step[s].on);
@@ -299,6 +309,8 @@ static void rt_draw_header(void)
         rt_text_s(x + 8, 8, e, RT_TEXT);
     } else if (rt_sn.view == ROTO_VIEW_ENV) {
         rt_text_s(x + 8, 8, "ENVELOPE", RT_TEXT);
+    } else if (rt_sn.view == ROTO_VIEW_FLT) {
+        rt_text_s(x + 8, 8, "FILTER", RT_TEXT);
     } else {
         rt_text_s(x + 8, 8, RT_DIV[rt_sn.div <= 4 ? rt_sn.div : 1], RT_TEXT);
         rt_fmt_u(buf, rt_sn.bpm);
@@ -330,6 +342,7 @@ static void rt_draw_centre(void)
 {
     static const char *const RT_DIVS[5] = {"1/16", "1/16", "1/8", "3/16", "1/4"};
     static const char *const RT_SHOWN[11] = {"", "LENGTH", "FILL", "ROTATE", "RATE", "PROB", "BPM", "ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
+    int flt_show = rt_sn.show >= ROTO_SHOW_BRIGHT && rt_sn.show <= ROTO_SHOW_DRIVE;
     char big[8], small[16];
     uint16_t small_col = RT_GREY;
     uint32_t w;
@@ -345,9 +358,25 @@ static void rt_draw_centre(void)
         rt_fmt_u(big, (rt_sn.env[rt_sn.show - ROTO_SHOW_ATK] * 100u + 63u) / 127u);
         w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0;
         break;
+    case ROTO_SHOW_BRIGHT: case ROTO_SHOW_EDGE: case ROTO_SHOW_FENV: case ROTO_SHOW_DRIVE: {
+        int32_t v = rt_sn.flt[rt_sn.show - ROTO_SHOW_BRIGHT];
+        if (v == -128) { big[0] = '-'; big[1] = 0; break; }
+        w = 0;
+        if (rt_sn.show == ROTO_SHOW_FENV) { if (v > 0) big[w++] = '+'; if (v < 0) { big[w++] = '-'; v = -v; } }
+        rt_fmt_u(big + w, (uint32_t)v);
+        w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0;
+        break;
+    }
     default:               rt_fmt_u(big, rt_sn.hits); break;
     }
-    if (rt_sn.show && rt_sn.show < 11u) {
+    if (flt_show) {                                          /* the sound's own name for it */
+        const char *l = rt_sn.flt[rt_sn.show - ROTO_SHOW_BRIGHT] == -128
+                      ? (rt_sn.show == ROTO_SHOW_FENV ? "NO ENV" : "NONE") : rt_sn.flt_lbl[rt_sn.show - ROTO_SHOW_BRIGHT];
+        uint32_t i;
+        for (i = 0; l[i] && i < 15u; i++) small[i] = l[i];
+        small[i] = 0;
+        small_col = RT_TRK_COL[rt_sn.sel];
+    } else if (rt_sn.show && rt_sn.show < 11u) {
         const char *l = RT_SHOWN[rt_sn.show];
         uint32_t i;
         for (i = 0; l[i]; i++) small[i] = l[i];
@@ -527,10 +556,87 @@ static void rt_draw_env(void)
     }
 }
 
+/* ------------------------------------------------------------- filter
+ * Seven rings in the track colour: BRIGHT spreads them out (dark: they huddle
+ * in), DRIVE makes them wobble, EDGE grows a pink starburst in the middle, and
+ * a dotted ring shows how far the envelope pushes the tone (out, or in when
+ * negative). Along the bottom, the four with the sound's own names. */
+#define RT_FLT_N 7
+
+static void rt_wobble_ring(int32_t r, int32_t amp, int32_t phase, uint16_t c)
+{
+    int32_t a, px = 0, py = 0, x, y;
+    if (!amp) { rt_circle(RT_CX, RT_CY, r, c); return; }
+    for (a = 0; a <= 1024; a += 8) {
+        int32_t rr = r + rt_round14(rt_sin(a * 9 + phase) * amp);
+        rt_polar(a, rr, &x, &y);
+        if (a) rt_line(px, py, x, y, c);
+        px = x; py = y;
+    }
+}
+
+static void rt_draw_flt(void)
+{
+    uint16_t col = RT_TRK_COL[rt_sn.sel], half = RT_TRK_HALF[rt_sn.sel];
+    int32_t b = rt_sn.flt[0] == -128 ? 50 : rt_sn.flt[0];
+    int32_t e = rt_sn.flt[1] == -128 ? 0 : rt_sn.flt[1];
+    int32_t d = rt_sn.flt[3] == -128 ? 0 : rt_sn.flt[3];
+    int32_t sp = 3 + (b * 7) / 100, amp = d ? (d * 6 + 99) / 100 : 0, i, outer = 14 + RT_FLT_N * sp;
+
+    for (i = 1; i <= RT_FLT_N; i++)
+        rt_wobble_ring(14 + i * sp, amp, i * 90, (i & 1) || i == RT_FLT_N ? col : half);
+
+    if (rt_sn.flt[2] != -128 && rt_sn.flt[2]) {             /* where the envelope takes it */
+        int32_t r = outer + (rt_sn.flt[2] * 22) / 100, a, x, y;
+        if (r < 8) r = 8;
+        if (r > 94) r = 94;
+        for (a = 0; a < 1024; a += 16) {
+            rt_polar(a, r, &x, &y);
+            rt_px(x, y, RT_GREY);
+        }
+    }
+
+    if (!rt_sn.show) {                                      /* the starburst: EDGE */
+        int32_t n = 12, len = 3 + (e * 16) / 100, k, x0, y0, x1, y1;
+        for (k = 0; k < n; k++) {
+            int32_t a = (k * 1024) / n + 40;
+            rt_polar(a, 3, &x0, &y0);
+            rt_polar(a, 3 + len - (k & 1) * (len / 3), &x1, &y1);
+            rt_line(x0, y0, x1, y1, RT_PINK);
+        }
+        rt_rect(RT_CX - 1, RT_CY - 1, RT_CX + 2, RT_CY + 2, RT_TEXT);
+    } else {
+        rt_rect(RT_CX - 34, RT_CY - 22, RT_CX + 35, RT_CY + 20, RT_BG);
+        rt_draw_centre();
+    }
+
+    {                                                       /* the four, with the sound's own names */
+        char line[48];
+        uint32_t k, n = 0;
+        for (k = 0; k < 4u; k++) {
+            const char *l = k == 2u ? "ENV" : rt_sn.flt_lbl[k];
+            int32_t v = rt_sn.flt[k];
+            uint32_t c;
+            if (k) { line[n++] = ' '; line[n++] = ' '; }
+            for (c = 0; l[c] && c < 5u; c++) line[n++] = l[c];
+            line[n++] = ' ';
+            if (v == -128) { line[n++] = '-'; continue; }
+            if (k == 2u && v > 0) line[n++] = '+';
+            if (v < 0) { line[n++] = '-'; v = -v; }
+            line[n] = 0;
+            rt_fmt_u(line + n, (uint32_t)v);
+            n = rt_strlen(line);
+        }
+        line[n] = 0;
+        rt_text_s(RT_CX - RT_TEXT_S_W(line) / 2, RT_H - 11, line, RT_GREY);
+    }
+}
+
 static void rt_draw_scene(void)
 {
     rt_draw_header();
     if (rt_sn.view == ROTO_VIEW_ENV) rt_draw_env();
+    else if (rt_sn.view == ROTO_VIEW_FLT) rt_draw_flt();
     else rt_draw_ring();
 }
 
@@ -602,6 +708,7 @@ static uint32_t rt_ring_sig(void)
     if (rt_sn.show) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); h = rt_fnv(h, rt_sn.div); h = rt_fnv(h, rt_sn.bpm); }
     else if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); }
     if (rt_sn.view == ROTO_VIEW_ENV) { uint32_t e; for (e = 0; e < 4u; e++) h = rt_fnv(h, rt_sn.env[e]); }
+    if (rt_sn.view == ROTO_VIEW_FLT) { uint32_t e, c; for (e = 0; e < 4u; e++) { h = rt_fnv(h, (uint8_t)rt_sn.flt[e]); for (c = 0; rt_sn.flt_lbl[e][c]; c++) h = rt_fnv(h, (uint8_t)rt_sn.flt_lbl[e][c]); } }
     for (s = 0; s < rt_sn.len; s++)
         h = rt_fnv(h, (uint32_t)(rt_sn.on[s] | (rt_sn.ghost[s] << 1) | (rt_sn.note[s] << 2)));
     return h;
@@ -637,7 +744,7 @@ int roto_ui_draw(int force, uint32_t now_ms)
             rt_repaint_rows(0, RT_HEAD_Y1);             /* the header only (K4) */
         else if (rt_sn.bpm != rt_shown_bpm && rt_sn.view == ROTO_VIEW_RING)
             rt_repaint(RT_BPM_X1 - 50, 4, RT_BPM_X1 + 1, 17);
-        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos && rt_sn.view != ROTO_VIEW_ENV) {
+        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos && rt_sn.view != ROTO_VIEW_ENV && rt_sn.view != ROTO_VIEW_FLT) {
             int32_t x0, y0, x1, y1;
             rt_playhead_box(rt_shown_pos < rt_sn.len ? rt_shown_pos : 0, rt_sn.len, &x0, &y0, &x1, &y1);
             rt_repaint(x0, y0, x1, y1);

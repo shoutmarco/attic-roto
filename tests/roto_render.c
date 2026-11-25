@@ -163,6 +163,35 @@ int main(int argc, char **argv)
     for (f = 0; f < frames; f += CTL) {
         int32_t o[2 * CTL];
         if (f >= stop_at && roto.running) roto_stop();
+        if (getenv("FDEMO")) {                         /* FDEMO: the FILTER knobs, as the screen moves them (roto_tone_map) */
+            static const char *const what[4] = {"BRIGHT", "EDGE", "ENV", "DRIVE"};
+            double sec = (double)f / FS;
+            uint32_t tk = 2, m, e;
+            uint8_t map[3];
+            int has_env;
+            roto_tone_map(trk[tk].eng_req, map, &has_env);
+            for (e = 0; e < 4u; e++) {
+                double t0 = 4.0 + e * 6.0, x;
+                if (sec < t0 || sec > t0 + 6.0) continue;
+                x = (sec - t0) / 6.0;                   /* 0..1 over six seconds */
+                if (e == 2u) {
+                    if (has_env) trk[tk].p[P_ED_FLT] = (int16_t)(-64 + x * 127);
+                } else {
+                    m = e < 2u ? map[e] : map[2];
+                    if (m < 8u) {
+                        const param_desc_t *pd = &ENGINES[trk[tk].eng_req]->edit[m];
+                        trk[tk].p[P_E0 + m] = (int16_t)(pd->min + (e == 0u ? x : x) * (pd->max - pd->min));
+                    }
+                }
+                if (f % FS < CTL && sec - t0 < 1.0)
+                    printf("  %2.0fs  ring 3 %s: %s swept %s over 6 s\n", sec, roto.snd[tk].name, what[e], e == 2u ? "-100% to +100%" : "0 to 100%");
+            }
+            if (sec >= 28.0 && sec < 28.0 + (double)CTL / FS) {
+                roto_tone_map(trk[1].eng_req, map, &has_env);
+                if (map[0] < 8u) trk[1].p[P_E0 + map[0]] = ENGINES[trk[1].eng_req]->edit[map[0]].min;
+                printf("  28s  ring 2 %s: BRIGHT to 0%% (dark)\n", roto.snd[1].name);
+            }
+        }
         if (getenv("DEMO") && f % FS < CTL) {            /* DEMO: euclid moves while it plays, one a few seconds */
             uint32_t sec = f / FS, h, s2;
             #define HITS(tk) (h = 0, ({ for (s2 = 0; s2 < roto.trk[tk].len; s2++) h += roto.trk[tk].step[s2].on; }), h)

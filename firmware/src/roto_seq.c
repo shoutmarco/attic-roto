@@ -633,6 +633,33 @@ void roto_euclid(uint32_t trk, uint32_t hits)
     home_save(k);
 }
 
+/* FILTER: per engine, the edit settings (0..7) that brighten, bite and dirty the sound.
+ * From each engine's own list (ANALOG CUT RES DRV, FM6 MLVL FB MEG, DRUM TONE SNAP DRV ...). */
+static const uint8_t TONE_MAP[14][4] = {
+    /* bright edge drive  env? */
+    {4, 5, 6, 1},          /*  0 ANALOG  CUT  RES  DRV  */
+    {0xFF, 0xFF, 0xFF, 0}, /*  1 (none) */
+    {2, 3, 7, 1},          /*  2 PHASE   DCW  ENV  FOLD */
+    {7, 2, 3, 1},          /*  3 LOFI    TONE DUTY CRSH */
+    {4, 2, 6, 1},          /*  4 SAMPLE  CUT  BITS DRV  */
+    {4, 6, 5, 1},          /*  5 VOICE   BUZZ Q    BRTH */
+    {5, 6, 7, 1},          /*  6 TRIO    CUT  RES  PW   */
+    {3, 5, 6, 0},          /*  7 WHEEL   TOP  CLICK DRV */
+    {7, 6, 3, 1},          /*  8 GRAIN   TONE RAND DENS */
+    {2, 3, 5, 1},          /*  9 PHYS    BRIT DAMP ACC  */
+    {2, 4, 7, 0},          /* 10 DRUM    TONE SNAP DRV  */
+    {2, 3, 7, 1},          /* 11 NOISE   FREQ RES  CRSH */
+    {2, 1, 4, 1},          /* 12 FM6     MLVL FB   MEG  */
+    {7, 6, 0xFF, 1},       /* 13 SLICE   TONE DCAY -    */
+};
+
+void roto_tone_map(uint32_t eng, uint8_t out[3], int *has_env)
+{
+    const uint8_t *m = TONE_MAP[eng < 14u ? eng : 1u];
+    out[0] = m[0]; out[1] = m[1]; out[2] = m[2];
+    *has_env = m[3];
+}
+
 /* ------------------------------------------------------------- transport */
 void roto_play(void)
 {

@@ -416,7 +416,7 @@ static void ui_leds(void)
         ready = 1;
     }
     (void)fam;                                          /* attic-roto: the lit button is the screen you're on */
-    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : B_HOME], 1);
+    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : B_HOME], 1);
     if ((k = arp_led()) != 2u && (!ui.layer || layer_btn() != B_ARP))
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3]))
@@ -1571,6 +1571,51 @@ static void ui_input(void)
             }
         }
     }
+    {   /* FILTER: K1 BRIGHT, K2 EDGE, K3 ENV (the track's envelope-to-filter), K4 DRIVE.
+         * BRIGHT / EDGE / DRIVE are whichever of the sound's own settings do that job
+         * (roto_tone_map); the screen gets them in percent, with their names. */
+        uint32_t t, e;
+        for (t = 0; t < ROTO_TRACKS && t < NTRK; t++) {
+            const engine_t *en = ENGINES[trk[t].eng_req % NENGINES];
+            uint8_t map[3];
+            int has_env;
+            roto_tone_map(trk[t].eng_req, map, &has_env);
+            for (e = 0; e < 4u; e++) {
+                uint32_t m = e < 2u ? map[e] : e == 3u ? map[2] : 0xFFu, c;
+                const char *l = e == 2u ? "ENV" : (m < 8u && en->edit[m].label) ? en->edit[m].label : "";
+                if (e == 2u) {
+                    roto.flt[t][e] = (int8_t)(has_env ? clamp((trk[t].p[P_ED_FLT] * 100) / 64, -100, 100) : -128);
+                } else if (m < 8u && en->edit[m].max > en->edit[m].min) {
+                    const param_desc_t *pd = &en->edit[m];
+                    roto.flt[t][e] = (int8_t)clamp(((trk[t].p[P_E0 + m] - pd->min) * 100) / (pd->max - pd->min), 0, 100);
+                } else {
+                    roto.flt[t][e] = -128;
+                }
+                for (c = 0; c < 5u && l[c]; c++) roto.flt_lbl[t][e][c] = l[c];
+                roto.flt_lbl[t][e][c] = 0;
+            }
+        }
+        if (roto.view == ROTO_VIEW_FLT && roto.sel < NTRK) {
+            track_t *tk = &trk[roto.sel];
+            const engine_t *en = ENGINES[tk->eng_req % NENGINES];
+            uint8_t map[3];
+            int has_env;
+            roto_tone_map(tk->eng_req, map, &has_env);
+            for (e = 0; e < 4u; e++) {
+                int32_t v = panel_enc(EN_K1 + (int32_t)e);
+                uint32_t m = e < 2u ? map[e] : e == 3u ? map[2] : 0xFFu;
+                if (!v) continue;
+                if (e == 2u) {
+                    if (has_env) tk->p[P_ED_FLT] = (int16_t)clamp(tk->p[P_ED_FLT] + v * 2, -64, 63);
+                } else if (m < 8u) {
+                    const param_desc_t *pd = &en->edit[m];
+                    int32_t step = (pd->max - pd->min) / 64;
+                    tk->p[P_E0 + m] = (int16_t)clamp(tk->p[P_E0 + m] + v * (step ? step : 1), pd->min, pd->max);
+                }
+                roto_ui_show(ROTO_SHOW_BRIGHT + e, fm1_ms);
+            }
+        }
+    }
     {
         int32_t v, i;
         uint32_t sel2 = (uint32_t)roto.sel;
@@ -1629,6 +1674,10 @@ static void ui_input(void)
     }
     if (pressed & (1u << panel.btn[B_ENV])) {               /* ENV: the envelope (again: back to the ring) */
         roto.view = roto.view == ROTO_VIEW_ENV ? ROTO_VIEW_RING : ROTO_VIEW_ENV;
+        roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
+    }
+    if (pressed & (1u << panel.btn[B_EDIT])) {              /* EDIT: the filter (again: back to the ring) */
+        roto.view = roto.view == ROTO_VIEW_FLT ? ROTO_VIEW_RING : ROTO_VIEW_FLT;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
     if (pressed & (1u << panel.btn[B_HOME])) {
