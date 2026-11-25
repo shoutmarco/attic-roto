@@ -313,6 +313,8 @@ static void steps_rotate(roto_track_t *k, int32_t dir)
         k->step[len - 1u] = keep;
     }
     k->rot = (uint8_t)((k->rot + (dir > 0 ? 1u : len - 1u)) % len);
+    for (s = 0; s < k->fill_n; s++)                  /* (FILL's hits moved with it) */
+        k->fill_at[s] = (uint8_t)((k->fill_at[s] + (dir > 0 ? 1u : len - 1u)) % len);
 }
 
 /* a random hit (ghosts == 1: only ghosts, 0: no ghosts) of k, or len if none */
@@ -354,6 +356,7 @@ static void evolve_once(void)
             if (d) {
                 for (s = 0; s < ROTO_STEPS; s++) k->step[s] = k->home[s];
                 k->rot = 0;
+                k->fill_n = 0;
                 return;
             }
         }
@@ -375,7 +378,6 @@ static void evolve_once(void)
             k->step[s].note = drums ? 42u : k->fill_note;
             k->step[s].vel = (uint8_t)(drums ? 28u + ev_dice(14u) : 42u + ev_dice(14u));
             k->step[s].chance = (uint8_t)(45u + ev_dice(30u));
-            k->step[s].fill = 0;
         }
         return;
     }
@@ -496,7 +498,12 @@ void roto_step_toggle(uint32_t trk, uint32_t step)
         st->vel = 100;
     }
     st->on ^= 1u;
-    st->fill = 0;                                   /* (a step set by hand belongs to the pattern) */
+    {                                               /* (a step set by hand belongs to the pattern) */
+        roto_track_t *k = &roto.trk[trk];
+        uint32_t i, j = 0;
+        for (i = 0; i < k->fill_n; i++) if (k->fill_at[i] != step) k->fill_at[j++] = k->fill_at[i];
+        k->fill_n = (uint8_t)j;
+    }
     st->chance = 0;
     home_save(&roto.trk[trk]);
 }
@@ -567,19 +574,18 @@ static void fill_once(uint32_t trk, int32_t dir)
         else
             st->note = k->step[best].note;
         st->vel = n && roto.snd[trk].eng != 10u ? k->step[best].vel : 64u;
-        if (k->fill_seq < 255u) k->fill_seq++;
-        st->fill = k->fill_seq;
         st->on = 1;
+        if (k->fill_n >= sizeof k->fill_at) {        /* (remember the newest 8) */
+            uint32_t i;
+            for (i = 1; i < sizeof k->fill_at; i++) k->fill_at[i - 1] = k->fill_at[i];
+            k->fill_n--;
+        }
+        k->fill_at[k->fill_n++] = (uint8_t)(st - k->step);
     } else {
-        uint32_t newest = 0;
         if (!n) return;
-        for (s = 0; s < k->len; s++)                 /* what FILL added goes first, newest first */
-            if (k->step[s].on && k->step[s].fill > newest) { newest = k->step[s].fill; best = s; }
-        if (newest) {
-            k->step[best].on = 0;
-            k->step[best].fill = 0;
-            if (newest == k->fill_seq) k->fill_seq--;
-            return;
+        while (k->fill_n) {                          /* what FILL added goes first, newest first */
+            s = k->fill_at[--k->fill_n];
+            if (s < k->len && k->step[s].on) { k->step[s].on = 0; return; }
         }
         bestv = 0xFFFFFFFFu;
         for (s = 0; s < k->len; s++) {               /* the most crowded hit (the last, on a tie) */
@@ -625,11 +631,10 @@ void roto_euclid(uint32_t trk, uint32_t hits)
     for (s = 0; s < len; s++) {
         uint32_t u = (s + len - k->rot % len) % len;    /* the step before the turn */
         roto_step_t *st = &k->step[s];
-        st->fill = 0;
         st->on = (uint8_t)((u * hits) % len < hits);
         if (st->on) { st->note = note[j % n]; st->vel = vel[j % n]; j++; }
     }
-    k->fill_seq = 0;
+    k->fill_n = 0;
     home_save(k);
 }
 

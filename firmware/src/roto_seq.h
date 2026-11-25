@@ -14,16 +14,15 @@
 #define ROTO_VERSION "v0.2"   /* attic-roto's own version (the splash, MENU > ABOUT) */
 
 #define ROTO_TRACKS  4
-#define ROTO_STEPS  64    /* max steps per ring */
+#define ROTO_STEPS  32    /* max steps per ring (32: memory; the patterns use up to 16) */
 #define ROTO_CHORD   3    /* extra chord notes per step */
 #define ROTO_POS_START 0xFFu   /* pos before the first step after PLAY */
 
-typedef struct {
-    uint8_t on;
-    uint8_t note;   /* MIDI note 0..127 */
-    uint8_t vel;    /* 1..127 */
-    uint8_t fill;   /* 0: part of the pattern; n: the n-th hit FILL added (taken away first, newest first) */
-    uint8_t chance; /* 0: always plays; 1..99: a ghost note, plays that percent of the time */
+typedef struct {    /* 3 bytes */
+    uint8_t note : 7;   /* MIDI note 0..127 */
+    uint8_t on : 1;
+    uint8_t vel;        /* 1..127 */
+    uint8_t chance;     /* 0: always plays; 1..99: a ghost note, plays that percent of the time */
 } roto_step_t;
 
 typedef struct {
@@ -38,7 +37,8 @@ typedef struct {
     uint8_t  sub;        /* audio side: sixteenths into the current step (0..div-1) */
     uint32_t gate_left;  /* samples until the held notes are released */
     uint8_t  fill_note;  /* the note FILL adds when the ring has no hits to copy */
-    uint8_t  fill_seq;   /* FILL's counter for the hits it adds */
+    uint8_t  fill_n;     /* the hits FILL added, newest last (taken away first, newest first) */
+    uint8_t  fill_at[8];
     uint8_t  rot;        /* how far ROTATE has turned the pattern (0..len-1, for display) */
     uint8_t  prob;       /* PROB: the chance each hit plays, percent (100 = always) */
     roto_step_t home[ROTO_STEPS];   /* the pattern as set (generator or your edits): EVOLVE drifts away and back to it */
