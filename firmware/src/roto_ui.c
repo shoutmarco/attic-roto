@@ -252,6 +252,7 @@ static void rt_note_name(char *out, uint32_t midi)
 /* what this frame draws (snapshotted once; the audio side keeps moving) */
 static struct {
     uint8_t sel, len, pos, div, bpm, hits, view, rot, prob, show;
+    uint8_t env[4];
     uint8_t on[ROTO_STEPS];
     uint8_t note[ROTO_STEPS];
     uint8_t ghost[ROTO_STEPS];
@@ -269,6 +270,7 @@ static void rt_snapshot(void)
     rt_sn.view = roto.view;
     rt_sn.rot = k->rot;
     rt_sn.prob = k->prob;
+    { uint32_t e; for (e = 0; e < 4u; e++) rt_sn.env[e] = (uint8_t)(roto.env[rt_sn.sel][e] & 127u); }
     rt_sn.hits = 0;
     for (s = 0; s < ROTO_STEPS; s++) {
         rt_sn.on[s] = (uint8_t)(s < rt_sn.len && k->step[s].on);
@@ -295,6 +297,8 @@ static void rt_draw_header(void)
         n = rt_strlen(e); e[n] = '/';
         rt_fmt_u(e + n + 1, rt_sn.len);
         rt_text_s(x + 8, 8, e, RT_TEXT);
+    } else if (rt_sn.view == ROTO_VIEW_ENV) {
+        rt_text_s(x + 8, 8, "ENVELOPE", RT_TEXT);
     } else {
         rt_text_s(x + 8, 8, RT_DIV[rt_sn.div <= 4 ? rt_sn.div : 1], RT_TEXT);
         rt_fmt_u(buf, rt_sn.bpm);
@@ -325,7 +329,7 @@ static void rt_draw_header(void)
 static void rt_draw_centre(void)
 {
     static const char *const RT_DIVS[5] = {"1/16", "1/16", "1/8", "3/16", "1/4"};
-    static const char *const RT_SHOWN[7] = {"", "LENGTH", "FILL", "ROTATE", "RATE", "PROB", "BPM"};
+    static const char *const RT_SHOWN[11] = {"", "LENGTH", "FILL", "ROTATE", "RATE", "PROB", "BPM", "ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
     char big[8], small[16];
     uint16_t small_col = RT_GREY;
     uint32_t w;
@@ -337,9 +341,13 @@ static void rt_draw_centre(void)
     case ROTO_SHOW_RATE:   { const char *d = RT_DIVS[rt_sn.div <= 4 ? rt_sn.div : 1]; uint32_t i; for (i = 0; d[i]; i++) big[i] = d[i]; big[i] = 0; } break;
     case ROTO_SHOW_PROB:   rt_fmt_u(big, rt_sn.prob); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
     case ROTO_SHOW_BPM:    rt_fmt_u(big, rt_sn.bpm); break;
+    case ROTO_SHOW_ATK: case ROTO_SHOW_DEC: case ROTO_SHOW_SUS: case ROTO_SHOW_REL:
+        rt_fmt_u(big, (rt_sn.env[rt_sn.show - ROTO_SHOW_ATK] * 100u + 63u) / 127u);
+        w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0;
+        break;
     default:               rt_fmt_u(big, rt_sn.hits); break;
     }
-    if (rt_sn.show && rt_sn.show < 7u) {
+    if (rt_sn.show && rt_sn.show < 11u) {
         const char *l = RT_SHOWN[rt_sn.show];
         uint32_t i;
         for (i = 0; l[i]; i++) small[i] = l[i];
@@ -417,10 +425,113 @@ static void rt_draw_ring(void)
     }
 }
 
+/* ------------------------------------------------------------- envelope
+ * The ring's envelope as an orbit: going round from the top is time, the
+ * distance from the centre is level (the dim inner circle is silence, the dim
+ * outer one full). Attack climbs out, decay falls to the sustain level, sustain
+ * holds for a fixed stretch, release falls back in. The joins get a small
+ * circled plus, the stretches their letter outside. */
+#define RT_ENV_R0  42                       /* level 0 */
+#define RT_ENV_R1  90                       /* level 127 */
+#define RT_ENV_S   160                      /* the sustain stretch (1024 a turn) */
+
+static int32_t rt_env_span(uint32_t v) { return 24 + (int32_t)((v * 256u) / 127u); }   /* 24..280 */
+
+static int32_t rt_env_r(int32_t level) { return RT_ENV_R0 + (level * (RT_ENV_R1 - RT_ENV_R0)) / 127; }
+
+/* one stretch from level l0 to l1 over angles a0..a1; curved: 0 straight, 1 falls fast then eases */
+static void rt_env_seg(int32_t a0, int32_t a1, int32_t l0, int32_t l1, int curved, uint16_t c)
+{
+    int32_t px = 0, py = 0, x, y, i, n = (a1 - a0) / 6 + 1;
+    for (i = 0; i <= n; i++) {
+        int32_t a = a0 + ((a1 - a0) * i) / n, l;
+        if (curved) {                                    /* l1 + (l0 - l1) * (1 - t)^2 */
+            int32_t u = n - i;
+            l = l1 + ((l0 - l1) * u * u) / (n * n);
+        } else {
+            l = l0 + ((l1 - l0) * i) / n;
+        }
+        rt_polar(a, rt_env_r(l), &x, &y);
+        if (i) rt_line(px, py, x, y, c);
+        px = x; py = y;
+    }
+}
+
+static void rt_env_join(int32_t a, int32_t level)
+{
+    int32_t x, y;
+    rt_polar(a, rt_env_r(level), &x, &y);
+    rt_diamond_fill(x, y, 3, RT_BG);
+    rt_circle(x, y, 4, RT_GREY);
+    rt_hspan(x - 2, x + 3, y, RT_TEXT);
+    rt_rect(x, y - 2, x + 1, y + 3, RT_TEXT);
+}
+
+static void rt_env_label(int32_t a, const char *t)
+{
+    int32_t x, y;
+    rt_polar(a, RT_ENV_R1 + 13, &x, &y);
+    rt_text_s(x - 2, y - 3, t, RT_GREY);
+}
+
+static void rt_draw_env(void)
+{
+    uint16_t col = RT_TRK_COL[rt_sn.sel];
+    int32_t sus = rt_sn.env[2];
+    int32_t a0 = -256, a1, a2, a3, a4;
+    a1 = a0 + rt_env_span(rt_sn.env[0]);
+    a2 = a1 + rt_env_span(rt_sn.env[1]);
+    a3 = a2 + RT_ENV_S;
+    a4 = a3 + rt_env_span(rt_sn.env[3]);
+
+    rt_circle(RT_CX, RT_CY, RT_ENV_R0, RT_TRK_RING[rt_sn.sel]);
+    rt_circle(RT_CX, RT_CY, RT_ENV_R1, RT_TRK_RING[rt_sn.sel]);
+    {                                                    /* where it starts: a spoke at the top */
+        int32_t x0, y0, x1, y1;
+        rt_polar(a0, RT_ENV_R0 - 6, &x0, &y0);
+        rt_polar(a0, RT_ENV_R1 + 6, &x1, &y1);
+        rt_line(x0, y0, x1, y1, RT_LINE);
+    }
+
+    rt_env_seg(a0, a1, 0, 127, 0, col);                  /* attack */
+    rt_env_seg(a1, a2, 127, sus, 1, col);                /* decay */
+    rt_env_seg(a2, a3, sus, sus, 0, col);                /* sustain */
+    rt_env_seg(a3, a4, sus, 0, 1, col);                  /* release */
+
+    rt_env_join(a1, 127);
+    rt_env_join(a2, sus);
+    rt_env_join(a3, sus);
+    rt_env_label((a0 + a1) / 2, "A");
+    rt_env_label((a1 + a2) / 2, "D");
+    rt_env_label((a2 + a3) / 2, "S");
+    rt_env_label((a3 + a4) / 2, "R");
+    {                                                    /* the end of the release: a pink dot on silence */
+        int32_t x, y;
+        rt_polar(a4, RT_ENV_R0, &x, &y);
+        rt_rect(x - 1, y - 1, x + 2, y + 2, RT_PINK);
+    }
+
+    if (rt_sn.show) {
+        rt_draw_centre();
+    } else {                                             /* at rest: the four, small */
+        char l1[16], l2[16];
+        uint32_t n;
+        l1[0] = 'A'; l1[1] = ' '; rt_fmt_u(l1 + 2, (rt_sn.env[0] * 100u + 63u) / 127u);
+        n = rt_strlen(l1); l1[n] = ' '; l1[n + 1] = ' '; l1[n + 2] = 'D'; l1[n + 3] = ' ';
+        rt_fmt_u(l1 + n + 4, (rt_sn.env[1] * 100u + 63u) / 127u);
+        l2[0] = 'S'; l2[1] = ' '; rt_fmt_u(l2 + 2, (rt_sn.env[2] * 100u + 63u) / 127u);
+        n = rt_strlen(l2); l2[n] = ' '; l2[n + 1] = ' '; l2[n + 2] = 'R'; l2[n + 3] = ' ';
+        rt_fmt_u(l2 + n + 4, (rt_sn.env[3] * 100u + 63u) / 127u);
+        rt_text_s(RT_CX - RT_TEXT_S_W(l1) / 2, RT_CY - 9, l1, RT_GREY);
+        rt_text_s(RT_CX - RT_TEXT_S_W(l2) / 2, RT_CY + 3, l2, RT_GREY);
+    }
+}
+
 static void rt_draw_scene(void)
 {
     rt_draw_header();
-    rt_draw_ring();
+    if (rt_sn.view == ROTO_VIEW_ENV) rt_draw_env();
+    else rt_draw_ring();
 }
 
 /* clear a box and draw the scene clipped to it */
@@ -490,6 +601,7 @@ static uint32_t rt_ring_sig(void)
     h = rt_fnv(h, rt_sn.show);
     if (rt_sn.show) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); h = rt_fnv(h, rt_sn.div); h = rt_fnv(h, rt_sn.bpm); }
     else if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); }
+    if (rt_sn.view == ROTO_VIEW_ENV) { uint32_t e; for (e = 0; e < 4u; e++) h = rt_fnv(h, rt_sn.env[e]); }
     for (s = 0; s < rt_sn.len; s++)
         h = rt_fnv(h, (uint32_t)(rt_sn.on[s] | (rt_sn.ghost[s] << 1) | (rt_sn.note[s] << 2)));
     return h;
@@ -525,7 +637,7 @@ int roto_ui_draw(int force, uint32_t now_ms)
             rt_repaint_rows(0, RT_HEAD_Y1);             /* the header only (K4) */
         else if (rt_sn.bpm != rt_shown_bpm && rt_sn.view == ROTO_VIEW_RING)
             rt_repaint(RT_BPM_X1 - 50, 4, RT_BPM_X1 + 1, 17);
-        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos) {
+        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos && rt_sn.view != ROTO_VIEW_ENV) {
             int32_t x0, y0, x1, y1;
             rt_playhead_box(rt_shown_pos < rt_sn.len ? rt_shown_pos : 0, rt_sn.len, &x0, &y0, &x1, &y1);
             rt_repaint(x0, y0, x1, y1);

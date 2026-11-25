@@ -416,7 +416,7 @@ static void ui_leds(void)
         ready = 1;
     }
     (void)fam;                                          /* attic-roto: the lit button is the screen you're on */
-    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : B_HOME], 1);
+    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : B_HOME], 1);
     if ((k = arp_led()) != 2u && (!ui.layer || layer_btn() != B_ARP))
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3]))
@@ -1554,6 +1554,23 @@ static void ui_input(void)
      *   EUCLID  K1 FILL    K2 ROTATE  K3 LENGTH  K4 PROB   (as the euclid reference)
      * SELECT the tempo, ALGO which ring; PRESET does nothing here.
      * Every turn shows its value in the centre for a moment (roto_ui_show). */
+    {   /* ENVELOPE: K1..K4 attack, decay, sustain, release of the ring's sound (taken first,
+         * so the sequencer knobs below see nothing on that screen) */
+        static const uint8_t ENV_P[4] = {P_ATK, P_DEC, P_SUS, P_REL};
+        uint32_t t, e;
+        for (t = 0; t < ROTO_TRACKS && t < NTRK; t++)        /* (the screen's copy follows the sound) */
+            for (e = 0; e < 4u; e++) roto.env[t][e] = (uint8_t)clamp(trk[t].p[ENV_P[e]], 0, 127);
+        if (roto.view == ROTO_VIEW_ENV && roto.sel < NTRK) {
+            track_t *tk = &trk[roto.sel];
+            for (e = 0; e < 4u; e++) {
+                int32_t v = panel_enc(EN_K1 + (int32_t)e);
+                if (!v) continue;
+                tk->p[ENV_P[e]] = (int16_t)clamp(tk->p[ENV_P[e]] + v * 2, 0, 127);
+                roto.env[roto.sel][e] = (uint8_t)tk->p[ENV_P[e]];
+                roto_ui_show(ROTO_SHOW_ATK + e, fm1_ms);
+            }
+        }
+    }
     {
         int32_t v, i;
         uint32_t sel2 = (uint32_t)roto.sel;
@@ -1608,6 +1625,10 @@ static void ui_input(void)
     /* attic-roto: the screens. SEQ: EUCLID (again: back to the ring). HOME: the ring. */
     if (pressed & (1u << panel.btn[B_SEQ])) {
         roto.view = roto.view == ROTO_VIEW_EUCLID ? ROTO_VIEW_RING : ROTO_VIEW_EUCLID;
+        roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
+    }
+    if (pressed & (1u << panel.btn[B_ENV])) {               /* ENV: the envelope (again: back to the ring) */
+        roto.view = roto.view == ROTO_VIEW_ENV ? ROTO_VIEW_RING : ROTO_VIEW_ENV;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
     if (pressed & (1u << panel.btn[B_HOME])) {

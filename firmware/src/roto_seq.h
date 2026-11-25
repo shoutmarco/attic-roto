@@ -71,13 +71,16 @@ typedef struct {
     uint8_t  throw_trk;  /* the ring in a dub throw (0xFF: none) */
     uint8_t  throw_left; /* 1/16s until it ends */
     uint32_t ev_rs;      /* EVOLVE's dice */
+    uint8_t  env[ROTO_TRACKS][4];   /* each ring's sound's envelope, A D S R 0..127 (a copy of the track's P_ATK..P_REL, for the screen) */
 } roto_seq_t;
 
 #define ROTO_VIEW_RING   0
 #define ROTO_VIEW_EUCLID 1
+#define ROTO_VIEW_ENV    2
 
 /* what a knob just changed, for roto_ui_show() (the centre shows it for a moment) */
-enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_SHOW_RATE, ROTO_SHOW_PROB, ROTO_SHOW_BPM };
+enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_SHOW_RATE, ROTO_SHOW_PROB, ROTO_SHOW_BPM,
+       ROTO_SHOW_ATK, ROTO_SHOW_DEC, ROTO_SHOW_SUS, ROTO_SHOW_REL };
 
 extern roto_seq_t roto;
 
