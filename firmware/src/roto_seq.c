@@ -59,20 +59,23 @@ static void put(roto_track_t *k, uint32_t s, uint32_t note, uint32_t vel)
     k->step[s].vel = (uint8_t)(vel < 1u ? 1u : vel > 127u ? 127u : vel);
 }
 
-/* a free step of k, chosen with weights by s % 4 (w[0..3]); len if none */
-static uint32_t pick_step(const roto_track_t *k, const uint8_t w[4])
+/* a free step of k, chosen with weights by s % 4 (w[0..3]), never right next to another
+ * hit (room between the notes); len if none */
+static uint32_t pick_spaced(const roto_track_t *k, const uint8_t w[4])
 {
-    uint32_t s, total = 0, r;
-    for (s = 0; s < k->len; s++)
-        if (!k->step[s].on) total += w[s % 4u];
-    if (!total) return k->len;
+    uint32_t s, total = 0, r, len = k->len;
+    #define RT_ROOMY(s) (!k->step[s].on && !k->step[((s) + 1u) % len].on && !k->step[((s) + len - 1u) % len].on)
+    for (s = 0; s < len; s++)
+        if (RT_ROOMY(s)) total += w[s % 4u];
+    if (!total) return len;
     r = rnd(total);
-    for (s = 0; s < k->len; s++)
-        if (!k->step[s].on) {
+    for (s = 0; s < len; s++)
+        if (RT_ROOMY(s)) {
             if (r < w[s % 4u]) return s;
             r -= w[s % 4u];
         }
-    return k->len;
+    #undef RT_ROOMY
+    return len;
 }
 
 /* the sounds each role may get: engine, preset (engines.c ENGINES[] numbering), level.
@@ -128,7 +131,6 @@ void roto_seq_generate(uint32_t seed)
     static const uint8_t ROOTS[6] = {2, 4, 9, 7, 0, 5};          /* D E A G C F */
     static const uint8_t W_BASS[4] = {1, 3, 4, 3};               /* off the kick */
     static const uint8_t W_ODD[4] = {0, 3, 0, 3};
-    static const uint8_t W_ANY[4] = {3, 2, 3, 2};
     static const uint8_t W_GHOST[4] = {0, 3, 1, 3};
     static const uint8_t L_BASS[4] = {16, 15, 13, 14};
     static const uint8_t L_STAB[5] = {7, 9, 10, 11, 12};
@@ -152,75 +154,72 @@ void roto_seq_generate(uint32_t seed)
     sc = MODE_SC[roto.mode];
     roto.bpm = (uint8_t)(112u + rnd(13u));
     roto.dtime = 10;                                             /* params.c N_DTIME: 1/8D */
-    roto.dfdbk = (uint8_t)(55u + rnd(15u));
+    roto.dfdbk = (uint8_t)(62u + rnd(15u));                     /* dub: long tails, 62..76 */
     roto.swing = (uint8_t)(52u + rnd(7u));                       /* a light shuffle, 52..58 */
     roto.evolve = 50;
 
-    /* 1: drums, 16 steps. Kick on the beats (sometimes the last one pushed),
-     * off-beat open hats, a stray rim or clap, a few closed hats, ghost hats. */
+    /* 1: drums, 16 steps, minimal. Kick on the beats (sometimes the last one pushed),
+     * an open hat or two off the beat, maybe a stray rim or clap, at most one ghost. */
     k = &roto.trk[0];
     k->len = 16; k->div = 1; k->gate = 25; k->fill_note = 42;   /* (FILL adds closed hats) */
     for (s = 0; s < 16u; s += 4u) put(k, s, 36, s ? 104u + rnd(12u) : 120u);
     if (chance(30)) { k->step[12].on = 0; put(k, chance(50) ? 11u : 14u, 36, 100); }
-    for (s = 2; s < 16u; s += 4u) if (!k->step[s].on && chance(65)) put(k, s, 46, 62u + rnd(28u));
-    n = chance(30) ? 2u : 1u;
+    n = 0;
+    for (s = 2; s < 16u; s += 4u) if (!k->step[s].on && n < 2u && chance(45)) { put(k, s, 46, 62u + rnd(28u)); n++; }
+    n = chance(60) ? 1u : 0u;
     for (i = 0; i < n; i++) {
         uint32_t note, vel;
-        s = pick_step(k, W_ODD);
+        s = pick_spaced(k, W_ODD);
         note = chance(50) ? 37u : 39u;                           /* rim or clap */
         vel = 78u + rnd(20u);
         if (s < k->len) put(k, s, note, vel);
     }
-    n = rnd(3u);
-    for (i = 0; i < n; i++) {
-        uint32_t vel;
-        s = pick_step(k, W_ANY);
-        vel = 44u + rnd(24u);
-        if (s < k->len) put(k, s, 42, vel);
-    }
-    n = 1u + rnd(3u);
+    n = rnd(2u);
     for (i = 0; i < n; i++) {
         uint32_t note, vel, pct;
-        s = pick_step(k, W_GHOST);
+        s = pick_spaced(k, W_GHOST);
         note = chance(75) ? 42u : 37u;
         vel = 26u + rnd(16u);
         pct = 45u + rnd(30u);
         if (s < k->len) ghost(k, s, note, vel, pct);
     }
-    sound(&roto.snd[0], SND_DRUMS[rnd(NSND(SND_DRUMS))], 0, 14, 0, 0);
+    sound(&roto.snd[0], SND_DRUMS[rnd(NSND(SND_DRUMS))], 0, 18, 0, 0);    /* (drums mostly dry) */
 
     /* 2: bass, a length that drifts against the drums; root-heavy but it moves,
-     * the first note leaning on, a ghost or two. */
+     * the first note leaning on; three or four notes, never two in a row, maybe a ghost. */
     k = &roto.trk[1];
-    k->len = L_BASS[rnd(4u)]; k->div = 1; k->gate = 55;
+    k->len = L_BASS[rnd(4u)]; k->div = 1; k->gate = 45;
     base = 36u + pc;
     if (pc >= 7u) base -= 12u;
     k->fill_note = (uint8_t)base;
-    n = 5u + rnd(3u);
+    n = 3u + rnd(2u);
     for (i = 0; i < n; i++) {
         uint32_t note, vel;
-        s = pick_step(k, W_BASS);
+        s = pick_spaced(k, W_BASS);
         if (s >= k->len) break;
         note = bass_note(rnd, sc, base);
         vel = i ? 84u + rnd(28u) : 118u;
         put(k, s, note, vel);
     }
-    n = 1u + rnd(2u);
+    n = chance(40) ? 1u : 0u;
     for (i = 0; i < n; i++) {
         uint32_t vel, pct;
-        s = pick_step(k, W_GHOST);
+        s = pick_spaced(k, W_GHOST);
         vel = 40u + rnd(16u);
         pct = 45u + rnd(25u);
         if (s < k->len) ghost(k, s, base, vel, pct);
     }
-    sound(&roto.snd[1], SND_BASS[rnd(NSND(SND_BASS))], 0, 0, 0, 0);
+    {                                                            /* dub: the deep ones (SUB, FM, FAT, WOW) */
+        static const uint8_t DUB_BASS[4] = {0, 2, 3, 4};
+        sound(&roto.snd[1], SND_BASS[DUB_BASS[rnd(4u)]], 0, 0, 0, 0);
+    }
 
-    /* 3: dub stabs, minor 7th chords that fit the mode, few and far apart. */
+    /* 3: dub stabs, minor 7th chords that fit the mode, one or two, far apart. */
     k = &roto.trk[2];
-    k->len = L_STAB[rnd(5u)]; k->div = (uint8_t)(chance(40) ? 2u : 1u); k->gate = 30;
+    k->len = L_STAB[rnd(5u)]; k->div = (uint8_t)(chance(40) ? 2u : 1u); k->gate = 22;   /* (short: the echoes fill in) */
     k->chord[0] = 3; k->chord[1] = 7; k->chord[2] = 10;
     k->fill_note = (uint8_t)(48u + pc);
-    n = 2u + rnd(2u);
+    n = 1u + rnd(2u);
     base = rnd(k->len);                                          /* spread round the ring, a little uneven */
     for (i = 0; i < n; i++) {
         s = (base + (k->len * i) / n + (i ? rnd(2u) : 0u)) % k->len;
@@ -229,13 +228,13 @@ void roto_seq_generate(uint32_t seed)
             if (!k->step[s].on) put(k, s, 48u + pc + root, vel);
         }
     }
-    sound(&roto.snd[2], SND_STAB[rnd(NSND(SND_STAB))], 64, 40, 24, -22);
+    sound(&roto.snd[2], SND_STAB[rnd(NSND(SND_STAB))], 84, 56, 24, -22);   /* dub: deep in the delay and reverb */
 
     /* 4: blips, minor pentatonic up high, sparse. */
     k = &roto.trk[3];
     k->len = L_BLIP[rnd(4u)]; k->div = (uint8_t)(chance(50) ? 2u : 1u); k->gate = 25;
     k->fill_note = (uint8_t)(60u + pc);
-    n = 2u + rnd(2u);
+    n = 1u + rnd(2u);
     base = rnd(k->len);
     for (i = 0; i < n; i++) {
         s = (base + (k->len * i) / n + (i ? rnd(2u) : 0u)) % k->len;
@@ -244,7 +243,7 @@ void roto_seq_generate(uint32_t seed)
             if (!k->step[s].on) put(k, s, 60u + pc + deg + up, vel);
         }
     }
-    sound(&roto.snd[3], SND_BLIP[rnd(NSND(SND_BLIP))], 72, 46, 0, 26);
+    sound(&roto.snd[3], SND_BLIP[rnd(NSND(SND_BLIP))], 88, 58, 0, 26);
 
     /* 5: more drums on the same kit — hats and percussion on their own odd length,
      * so they turn against the kick (drawn after everything above: rings 1-4 as before) */
@@ -253,7 +252,7 @@ void roto_seq_generate(uint32_t seed)
         static const uint8_t PERC[6] = {42, 42, 46, 37, 39, 42};
         k = &roto.trk[4];
         k->len = L_PERC[rnd(5u)]; k->div = 1; k->gate = 25; k->fill_note = 42;
-        n = 2u + rnd(3u);
+        n = 1u + rnd(2u);
         base = rnd(k->len);
         for (i = 0; i < n; i++) {
             s = (base + (k->len * i) / n + (i ? rnd(2u) : 0u)) % k->len;
@@ -269,7 +268,7 @@ void roto_seq_generate(uint32_t seed)
         k = &roto.trk[5];
         k->len = L_CTR[rnd(5u)]; k->div = (uint8_t)(chance(50) ? 2u : 1u); k->gate = 25;
         k->fill_note = (uint8_t)(72u + pc);
-        n = 1u + rnd(2u);
+        n = 1u;
         base = rnd(k->len);
         for (i = 0; i < n; i++) {
             s = (base + (k->len * i) / n) % k->len;
@@ -401,6 +400,8 @@ static uint32_t ev_empty(const roto_track_t *k)
     return k->len;
 }
 
+static uint32_t ring_hits(const roto_track_t *k);
+
 static void evolve_once(void)
 {
     static const uint8_t PENTA[5] = {0, 3, 5, 7, 10};
@@ -433,7 +434,8 @@ static void evolve_once(void)
         if (ev_dice(2u) && (s = ev_hit(k, 1)) < k->len) {
             k->step[s].on = 0;
             k->step[s].chance = 0;
-        } else if ((s = ev_empty(k)) < k->len) {
+        } else if ((s = ev_empty(k)) < k->len && ring_hits(k) * 4u < k->len
+                   && !k->step[(s + 1u) % k->len].on && !k->step[(s + k->len - 1u) % k->len].on) {   /* (keep the space) */
             int drums = k == &roto.trk[0];
             k->step[s].on = 1;
             k->step[s].note = drums ? 42u : k->fill_note;
@@ -466,7 +468,7 @@ static void throw_bar(void)
     if (roto.throw_trk < ROTO_PARTS) {
         return;                                              /* (one at a time) */
     }
-    if (ev_dice(100u) < (uint32_t)roto.evolve / 6u) {        /* evolve 50: a throw in about 1 bar of 12 */
+    if (ev_dice(100u) < (uint32_t)roto.evolve / 4u) {        /* evolve 50: a throw in about 1 bar of 8 */
         uint32_t t = 2u + ev_dice(2u);
         uint32_t d = (uint32_t)roto.snd[t].dly + 50u, fb = (uint32_t)roto.dfdbk + 16u;
         roto.throw_trk = (uint8_t)t;
