@@ -364,6 +364,7 @@ static void rt_draw_centre(void)
         rt_fmt_u(big, (rt_sn.env[rt_sn.show - ROTO_SHOW_ATK] * 100u + 63u) / 127u);
         w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0;
         break;
+    case ROTO_SHOW_HOLD: case ROTO_SHOW_NEW: big[0] = 'N'; big[1] = 'E'; big[2] = 'W'; big[3] = 0; break;
     case ROTO_SHOW_DTIME: { const char *d = roto_dtime_name(rt_sn.dtime); uint32_t i; for (i = 0; d[i] && i < 6u; i++) big[i] = d[i]; big[i] = 0; } break;
     case ROTO_SHOW_DFDBK:  rt_fmt_u(big, rt_sn.dfdbk); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
     case ROTO_SHOW_DSEND:  rt_fmt_u(big, (rt_sn.dsend * 100u + 63u) / 127u); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
@@ -379,7 +380,13 @@ static void rt_draw_centre(void)
     }
     default:               rt_fmt_u(big, rt_sn.hits); break;
     }
-    if (dly_show) {
+    if (rt_sn.show == ROTO_SHOW_HOLD || rt_sn.show == ROTO_SHOW_NEW) {
+        const char *l = rt_sn.show == ROTO_SHOW_HOLD ? "KEEP HOLDING" : "ALL CLEAR";
+        uint32_t i;
+        for (i = 0; l[i]; i++) small[i] = l[i];
+        small[i] = 0;
+        small_col = rt_sn.show == ROTO_SHOW_HOLD ? RT_PINK : RT_TRK_COL[rt_sn.sel];
+    } else if (dly_show) {
         const char *l = RT_DSHOWN[rt_sn.show - ROTO_SHOW_DTIME];
         uint32_t i;
         for (i = 0; l[i]; i++) small[i] = l[i];

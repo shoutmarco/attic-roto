@@ -1709,6 +1709,35 @@ static void ui_input(void)
         roto.view = roto.view == ROTO_VIEW_FLT ? ROTO_VIEW_RING : ROTO_VIEW_FLT;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
+    {   /* NEW: hold HOME for 2 s — everything stops, the rings empty, plain sounds (roto_seq_blank).
+         * From 0.4 s the centre says so; a quick press is just HOME. */
+        static uint32_t home_t0;
+        static uint8_t home_fired;
+        if ((fm1_in.buttons >> panel.btn[B_HOME]) & 1u) {
+            uint32_t held;
+            if (!home_t0) home_t0 = fm1_ms | 1u;
+            held = fm1_ms - home_t0;
+            if (!home_fired && held >= 2000u) {
+                uint32_t t0 = fm1_ms, t;
+                int busy = 1;
+                roto_stop();                                  /* (the audio side lets go of its notes ...) */
+                while (busy && fm1_ms - t0 < 100u) {          /* (... wait for that, up to 0.1 s) */
+                    busy = roto.throw_trk < ROTO_TRACKS;
+                    for (t = 0; t < ROTO_TRACKS; t++) busy |= roto.trk[t].nheld != 0u;
+                }
+                roto_seq_blank();
+                song.g[G_DCOLOR] = 70;
+                roto_apply_sounds();
+                home_fired = 1;
+                roto_ui_show(ROTO_SHOW_NEW, fm1_ms);
+            } else if (!home_fired && held >= 400u) {
+                roto_ui_show(ROTO_SHOW_HOLD, fm1_ms);
+            }
+        } else {
+            home_t0 = 0;
+            home_fired = 0;
+        }
+    }
     if (pressed & (1u << panel.btn[B_HOME])) {
         roto.view = ROTO_VIEW_RING;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);

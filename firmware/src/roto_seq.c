@@ -250,6 +250,31 @@ void roto_seq_generate(uint32_t seed)
     roto.sel = 0;                                                /* (stopped: the caller sets the sounds, then PLAY) */
 }
 
+void roto_seq_blank(void)
+{
+    static const uint8_t FILLN[ROTO_TRACKS] = {36, 36, 48, 72};      /* kick, C2, C3, C5 */
+    static const uint8_t GATE[ROTO_TRACKS] = {25, 55, 30, 25};
+    uint32_t t;
+    roto_seq_init();
+    roto.bpm = 120;
+    roto.swing = 50;
+    roto.evolve = 0;
+    roto.dtime = 10;                                             /* 1/8D */
+    roto.dfdbk = 55;
+    roto.root = 0;
+    for (t = 0; t < ROTO_TRACKS; t++) {
+        roto_track_t *k = &roto.trk[t];
+        k->len = 16; k->div = 1; k->gate = GATE[t]; k->prob = 100;
+        k->fill_note = FILLN[t];
+    }
+    roto.trk[2].chord[0] = 3; roto.trk[2].chord[1] = 7; roto.trk[2].chord[2] = 10;
+    sound(&roto.snd[0], SND_DRUMS[0], 0, 14, 0, 0);              /* DRUM KIT */
+    sound(&roto.snd[1], SND_BASS[0], 0, 0, 0, 0);                /* SUB BASS */
+    sound(&roto.snd[2], SND_STAB[0], 64, 40, 24, -22);           /* TINE EP */
+    sound(&roto.snd[3], SND_BLIP[2], 72, 46, 0, 26);             /* BELL */
+    for (t = 0; t < ROTO_TRACKS; t++) home_save(&roto.trk[t]);
+}
+
 /* ------------------------------------------------------------- tick */
 static void release(uint32_t t, roto_track_t *k)
 {
@@ -492,7 +517,7 @@ void roto_step_toggle(uint32_t trk, uint32_t step)
     st = &roto.trk[trk].step[step];
     if (!st->on && !st->vel) {                      /* a new step: the track's first note, full velocity */
         uint32_t s;
-        st->note = 60;
+        st->note = roto.trk[trk].fill_note ? roto.trk[trk].fill_note : 60u;
         for (s = 0; s < ROTO_STEPS; s++)
             if (roto.trk[trk].step[s].on) { st->note = roto.trk[trk].step[s].note; break; }
         st->vel = 100;

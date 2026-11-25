@@ -105,11 +105,20 @@ static void boot_leds(void)
 static void roto_boot(void)
 {
     const uint32_t *w = (const uint32_t *)(const void *)&felucca_dbg;
-    uint32_t seed = fm1_ticks() * 2654435761u, i, t;
+    uint32_t seed = fm1_ticks() * 2654435761u, i;
     for (i = 0; i < (uint32_t)(sizeof felucca_dbg / 4u); i++)
         seed = (seed ^ w[i]) * 16777619u;
     seed ^= fm1_ms * 0x85EBCA6Bu;
     roto_seq_generate(seed);
+    roto_apply_sounds();
+    roto_play();
+}
+
+/* the tracks get roto.snd[] (the firmware's own preset loader), the song roto's tempo
+ * and delay (the colour stays as it was). At power-on and on NEW. */
+void roto_apply_sounds(void)
+{
+    uint32_t i, t;
     for (t = 0; t < ROTO_TRACKS && t < NTRK; t++) {
         track_t *tk = &trk[t];
         roto_sound_t *sd = &roto.snd[t];
@@ -133,7 +142,6 @@ static void roto_boot(void)
     song.g[G_DTIME] = roto.dtime;
     song.g[G_DFDBK] = roto.dfdbk;
     roto.dcolor = (uint8_t)clamp(song.g[G_DCOLOR], 0, 127);   /* (the colour stays as it was) */
-    roto_play();
 }
 
 static void fm1_main(void)

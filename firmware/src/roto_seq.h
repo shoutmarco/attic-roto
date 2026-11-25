@@ -87,7 +87,8 @@ typedef struct {
 enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_SHOW_RATE, ROTO_SHOW_PROB, ROTO_SHOW_BPM,
        ROTO_SHOW_ATK, ROTO_SHOW_DEC, ROTO_SHOW_SUS, ROTO_SHOW_REL,
        ROTO_SHOW_BRIGHT, ROTO_SHOW_EDGE, ROTO_SHOW_FENV, ROTO_SHOW_DRIVE,
-       ROTO_SHOW_DTIME, ROTO_SHOW_DFDBK, ROTO_SHOW_DSEND, ROTO_SHOW_DCOLOR };
+       ROTO_SHOW_DTIME, ROTO_SHOW_DFDBK, ROTO_SHOW_DSEND, ROTO_SHOW_DCOLOR,
+       ROTO_SHOW_HOLD, ROTO_SHOW_NEW };
 
 extern roto_seq_t roto;
 
@@ -95,6 +96,11 @@ extern roto_seq_t roto;
 void roto_seq_init(void);
 /* a new random Weatherall-style pattern and sound plan from seed (stopped: set the sounds, then roto_play) */
 void roto_seq_generate(uint32_t seed);
+/* NEW: everything empty and plain — rings of 16 at 1/16, DRUM KIT / SUB BASS / TINE EP / BELL,
+ * 120 BPM, straight, EVOLVE off, delay 1/8D (stopped: set the sounds with roto_apply_sounds) */
+void roto_seq_blank(void);
+/* (main.c) give the tracks roto.snd[] and the song roto's tempo and delay */
+void roto_apply_sounds(void);
 
 /* audio side, once per sample block */
 void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate);
