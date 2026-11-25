@@ -416,7 +416,7 @@ static void ui_leds(void)
         ready = 1;
     }
     (void)fam;                                          /* attic-roto: the lit button is the screen you're on */
-    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : B_HOME], 1);
+    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : roto.view == ROTO_VIEW_DLY ? B_FX : B_HOME], 1);
     if ((k = arp_led()) != 2u && (!ui.layer || layer_btn() != B_ARP))
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3]))
@@ -1571,6 +1571,31 @@ static void ui_input(void)
             }
         }
     }
+    if (roto.view == ROTO_VIEW_DLY) {   /* DELAY: K1 TIME, K2 FEEDBACK, K3 the ring's SEND, K4 COLOUR.
+         * roto.dtime / dfdbk / snd[].dly are what dub throws come back to, so they're set first. */
+        int32_t v, i;
+        uint32_t sel2 = roto.sel < ROTO_TRACKS ? roto.sel : 0u;
+        if ((v = panel_enc(EN_K1)) != 0) {
+            for (i = 0; i < (v < 0 ? -v : v); i++) roto.dtime = (uint8_t)roto_dtime_step(roto.dtime, v);
+            song.g[G_DTIME] = roto.dtime;
+            roto_ui_show(ROTO_SHOW_DTIME, fm1_ms);
+        }
+        if ((v = panel_enc(EN_K2)) != 0) {
+            roto.dfdbk = (uint8_t)clamp((int32_t)roto.dfdbk + v * 2, 0, 120);
+            if (roto.throw_trk >= ROTO_TRACKS) song.g[G_DFDBK] = roto.dfdbk;
+            roto_ui_show(ROTO_SHOW_DFDBK, fm1_ms);
+        }
+        if ((v = panel_enc(EN_K3)) != 0) {
+            roto.snd[sel2].dly = (uint8_t)clamp((int32_t)roto.snd[sel2].dly + v * 3, 0, 127);
+            if (roto.throw_trk != sel2 && sel2 < NTRK) trk[sel2].p[P_DLY] = roto.snd[sel2].dly;
+            roto_ui_show(ROTO_SHOW_DSEND, fm1_ms);
+        }
+        if ((v = panel_enc(EN_K4)) != 0) {
+            roto.dcolor = (uint8_t)clamp((int32_t)roto.dcolor + v * 3, 0, 127);
+            song.g[G_DCOLOR] = roto.dcolor;
+            roto_ui_show(ROTO_SHOW_DCOLOR, fm1_ms);
+        }
+    }
     {   /* FILTER: K1 BRIGHT, K2 EDGE, K3 ENV (the track's envelope-to-filter), K4 DRIVE.
          * BRIGHT / EDGE / DRIVE are whichever of the sound's own settings do that job
          * (roto_tone_map); the screen gets them in percent, with their names. */
@@ -1674,6 +1699,10 @@ static void ui_input(void)
     }
     if (pressed & (1u << panel.btn[B_ENV])) {               /* ENV: the envelope (again: back to the ring) */
         roto.view = roto.view == ROTO_VIEW_ENV ? ROTO_VIEW_RING : ROTO_VIEW_ENV;
+        roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
+    }
+    if (pressed & (1u << panel.btn[B_FX])) {                /* FX: the delay (again: back to the ring) */
+        roto.view = roto.view == ROTO_VIEW_DLY ? ROTO_VIEW_RING : ROTO_VIEW_DLY;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
     if (pressed & (1u << panel.btn[B_EDIT])) {              /* EDIT: the filter (again: back to the ring) */

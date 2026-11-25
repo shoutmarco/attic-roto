@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "firmware" / "src" / "roto_font.h"
 UNIFONT = "/usr/share/fonts/opentype/unifont/unifont.otf"
-CHARS = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ#/%-+.:"
+CHARS = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ#/%-+.:>"
 
 S = {  # 5x7
     " ": ["     "] * 7,
@@ -62,6 +62,7 @@ S = {  # 5x7
     "+": ["     ", "  #  ", "  #  ", "#####", "  #  ", "  #  ", "     "],
     ".": ["     ", "     ", "     ", "     ", "     ", " ##  ", " ##  "],
     ":": ["     ", " ##  ", " ##  ", "     ", " ##  ", " ##  ", "     "],
+    ">": ["#    ", " #   ", "  #  ", "   # ", "  #  ", " #   ", "#    "],
 }
 
 

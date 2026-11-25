@@ -60,7 +60,8 @@ typedef struct {
     uint8_t  sel;        /* selected track 0..3 */
     uint8_t  root;       /* pitch class 0..11 of the generated key */
     uint8_t  mode;       /* 0 aeolian, 1 dorian, 2 phrygian */
-    uint8_t  dtime, dfdbk;   /* the delay the pattern was made for (song.g G_DTIME / G_DFDBK) */
+    uint8_t  dtime, dfdbk;   /* the delay (song.g G_DTIME / G_DFDBK): what dub throws come back to; DELAY edits it */
+    uint8_t  dcolor;     /* the delay's colour (song.g G_DCOLOR), for the screen */
     uint32_t seed;
     uint8_t  view;       /* the screen: ROTO_VIEW_RING / ROTO_VIEW_EUCLID (UI side) */
     uint8_t  swing;      /* 50 = straight; 50..75: the off 1/16s later */
@@ -80,11 +81,13 @@ typedef struct {
 #define ROTO_VIEW_EUCLID 1
 #define ROTO_VIEW_ENV    2
 #define ROTO_VIEW_FLT    3
+#define ROTO_VIEW_DLY    4
 
 /* what a knob just changed, for roto_ui_show() (the centre shows it for a moment) */
 enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_SHOW_RATE, ROTO_SHOW_PROB, ROTO_SHOW_BPM,
        ROTO_SHOW_ATK, ROTO_SHOW_DEC, ROTO_SHOW_SUS, ROTO_SHOW_REL,
-       ROTO_SHOW_BRIGHT, ROTO_SHOW_EDGE, ROTO_SHOW_FENV, ROTO_SHOW_DRIVE };
+       ROTO_SHOW_BRIGHT, ROTO_SHOW_EDGE, ROTO_SHOW_FENV, ROTO_SHOW_DRIVE,
+       ROTO_SHOW_DTIME, ROTO_SHOW_DFDBK, ROTO_SHOW_DSEND, ROTO_SHOW_DCOLOR };
 
 extern roto_seq_t roto;
 
@@ -106,6 +109,12 @@ void roto_euclid(uint32_t trk, uint32_t hits); /* exactly `hits` hits, spread ev
 /* FILTER: for a sound engine (engines.c numbering), which of its 8 edit settings is BRIGHT, EDGE
  * and DRIVE (0xFF: none), and whether it follows the envelope-to-filter amount (P_ED_FLT) */
 void roto_tone_map(uint32_t eng, uint8_t out[3], int *has_env);
+
+/* DELAY TIME (params.c N_DTIME numbering): its name, its length in 1/96 of a bar, and the next one
+ * longer (dir > 0) or shorter, so K1 runs through them in order of length */
+const char *roto_dtime_name(uint32_t t);
+uint32_t roto_dtime_96(uint32_t t);
+uint32_t roto_dtime_step(uint32_t t, int32_t dir);
 
 /* transport (UI side; the audio side releases notes after a stop) */
 void roto_play(void);

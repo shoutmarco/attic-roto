@@ -665,6 +665,24 @@ void roto_tone_map(uint32_t eng, uint8_t out[3], int *has_env)
     *has_env = m[3];
 }
 
+/* DELAY TIME, as params.c N_DTIME lists them */
+static const char *const DT_NAME[13] = {"1/4", "1/8", "1/16", "1/32", "8T", "16T", "1/2", "1/1", "2BAR", "4BAR", "1/8D", "1/16D", "1/4D"};
+static const uint16_t DT_96[13] = {24, 12, 6, 3, 8, 4, 48, 96, 192, 384, 18, 9, 36};
+static const uint8_t DT_ORDER[13] = {3, 5, 2, 4, 11, 1, 10, 0, 12, 6, 7, 8, 9};    /* shortest to longest */
+
+const char *roto_dtime_name(uint32_t t) { return DT_NAME[t < 13u ? t : 1u]; }
+uint32_t roto_dtime_96(uint32_t t) { return DT_96[t < 13u ? t : 1u]; }
+
+uint32_t roto_dtime_step(uint32_t t, int32_t dir)
+{
+    int32_t i, at = 5;
+    for (i = 0; i < 13; i++) if (DT_ORDER[i] == t) at = i;
+    at += dir;
+    if (at < 0) at = 0;
+    if (at > 12) at = 12;
+    return DT_ORDER[at];
+}
+
 /* ------------------------------------------------------------- transport */
 void roto_play(void)
 {

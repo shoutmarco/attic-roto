@@ -132,6 +132,7 @@ static void roto_boot(void)
     song.g[G_BPM] = roto.bpm;                 /* (the delay follows the tempo) */
     song.g[G_DTIME] = roto.dtime;
     song.g[G_DFDBK] = roto.dfdbk;
+    roto.dcolor = (uint8_t)clamp(song.g[G_DCOLOR], 0, 127);   /* (the colour stays as it was) */
     roto_play();
 }
 

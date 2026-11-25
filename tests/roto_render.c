@@ -104,6 +104,7 @@ static void host_roto_boot(uint32_t seed)
     song.g[G_BPM] = roto.bpm;
     song.g[G_DTIME] = roto.dtime;
     song.g[G_DFDBK] = roto.dfdbk;
+    roto.dcolor = (uint8_t)song.g[G_DCOLOR];
     roto_play();
 }
 
@@ -143,6 +144,15 @@ int main(int argc, char **argv)
         trk[solo ? solo - 1u : 0u].p[P_LEVEL] = 112;           /* 0 dB */
         trk[solo ? solo - 1u : 0u].p[P_MUTE] = 0;
     }
+    if (getenv("DLYTEST")) {                       /* DLYTEST=send,fdbk,time,colour on ring 3 from the start */
+        unsigned sd = 64, fbk = 66, tm = 10, col = 70;
+        sscanf(getenv("DLYTEST"), "%u,%u,%u,%u", &sd, &fbk, &tm, &col);
+        roto.snd[2].dly = (uint8_t)sd; trk[2].p[P_DLY] = (int16_t)sd;
+        roto.dfdbk = (uint8_t)fbk; song.g[G_DFDBK] = (int16_t)fbk;
+        roto.dtime = (uint8_t)tm; song.g[G_DTIME] = (int16_t)tm;
+        song.g[G_DCOLOR] = (int16_t)col;
+        roto.evolve = 0;                            /* (no throws: measure the setting itself) */
+    }
     if (solo)
         for (t = 0; t < NTRK; t++)
             if (t + 1u != solo) trk[t].p[P_LEVEL] = 0;
@@ -163,6 +173,14 @@ int main(int argc, char **argv)
     for (f = 0; f < frames; f += CTL) {
         int32_t o[2 * CTL];
         if (f >= stop_at && roto.running) roto_stop();
+        if (getenv("DDEMO") && f % FS < CTL) {           /* DDEMO: the DELAY knobs on the stab ring, as the screen sets them */
+            uint32_t sec = f / FS;
+            if (sec == 6)  { roto.dtime = 12; roto.dtime = (uint8_t)roto_dtime_step(12, 1); song.g[G_DTIME] = roto.dtime; printf("  %2us  TIME %s\n", sec, roto_dtime_name(roto.dtime)); }
+            if (sec == 12) { roto.dfdbk = 92; if (roto.throw_trk > 3) song.g[G_DFDBK] = 92; printf("  %2us  FEEDBACK 92%%\n", sec); }
+            if (sec == 18) { roto.snd[2].dly = 120; if (roto.throw_trk != 2) trk[2].p[P_DLY] = 120; printf("  %2us  ring 3 SEND 94%%\n", sec); }
+            if (sec == 24) { roto.dcolor = 18; song.g[G_DCOLOR] = 18; printf("  %2us  COLOUR 14%% (dark)\n", sec); }
+            if (sec == 30) { roto.dtime = 1; song.g[G_DTIME] = 1; roto.dfdbk = 40; if (roto.throw_trk > 3) song.g[G_DFDBK] = 40; roto.dcolor = 110; song.g[G_DCOLOR] = 110; printf("  %2us  TIME 1/8, FEEDBACK 40%%, COLOUR 87%%\n", sec); }
+        }
         if (getenv("FDEMO")) {                         /* FDEMO: the FILTER knobs, as the screen moves them (roto_tone_map) */
             static const char *const what[4] = {"BRIGHT", "EDGE", "ENV", "DRIVE"};
             double sec = (double)f / FS;

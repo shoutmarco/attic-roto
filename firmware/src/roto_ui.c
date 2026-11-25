@@ -254,6 +254,7 @@ static struct {
     uint8_t sel, len, pos, div, bpm, hits, view, rot, prob, show;
     uint8_t env[4];
     int8_t flt[4];
+    uint8_t dtime, dfdbk, dcolor, dsend;
     char flt_lbl[4][6];
     uint8_t on[ROTO_STEPS];
     uint8_t note[ROTO_STEPS];
@@ -273,6 +274,7 @@ static void rt_snapshot(void)
     rt_sn.rot = k->rot;
     rt_sn.prob = k->prob;
     { uint32_t e; for (e = 0; e < 4u; e++) rt_sn.env[e] = (uint8_t)(roto.env[rt_sn.sel][e] & 127u); }
+    rt_sn.dtime = roto.dtime; rt_sn.dfdbk = roto.dfdbk; rt_sn.dcolor = roto.dcolor; rt_sn.dsend = roto.snd[rt_sn.sel].dly;
     {
         uint32_t e, c;
         for (e = 0; e < 4u; e++) {
@@ -311,6 +313,8 @@ static void rt_draw_header(void)
         rt_text_s(x + 8, 8, "ENVELOPE", RT_TEXT);
     } else if (rt_sn.view == ROTO_VIEW_FLT) {
         rt_text_s(x + 8, 8, "FILTER", RT_TEXT);
+    } else if (rt_sn.view == ROTO_VIEW_DLY) {
+        rt_text_s(x + 8, 8, "DELAY", RT_TEXT);
     } else {
         rt_text_s(x + 8, 8, RT_DIV[rt_sn.div <= 4 ? rt_sn.div : 1], RT_TEXT);
         rt_fmt_u(buf, rt_sn.bpm);
@@ -342,6 +346,8 @@ static void rt_draw_centre(void)
 {
     static const char *const RT_DIVS[5] = {"1/16", "1/16", "1/8", "3/16", "1/4"};
     static const char *const RT_SHOWN[11] = {"", "LENGTH", "FILL", "ROTATE", "RATE", "PROB", "BPM", "ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
+    static const char *const RT_DSHOWN[4] = {"TIME", "FEEDBACK", "SEND", "COLOUR"};
+    int dly_show = rt_sn.show >= ROTO_SHOW_DTIME && rt_sn.show <= ROTO_SHOW_DCOLOR;
     int flt_show = rt_sn.show >= ROTO_SHOW_BRIGHT && rt_sn.show <= ROTO_SHOW_DRIVE;
     char big[8], small[16];
     uint16_t small_col = RT_GREY;
@@ -358,6 +364,10 @@ static void rt_draw_centre(void)
         rt_fmt_u(big, (rt_sn.env[rt_sn.show - ROTO_SHOW_ATK] * 100u + 63u) / 127u);
         w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0;
         break;
+    case ROTO_SHOW_DTIME: { const char *d = roto_dtime_name(rt_sn.dtime); uint32_t i; for (i = 0; d[i] && i < 6u; i++) big[i] = d[i]; big[i] = 0; } break;
+    case ROTO_SHOW_DFDBK:  rt_fmt_u(big, rt_sn.dfdbk); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
+    case ROTO_SHOW_DSEND:  rt_fmt_u(big, (rt_sn.dsend * 100u + 63u) / 127u); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
+    case ROTO_SHOW_DCOLOR: rt_fmt_u(big, (rt_sn.dcolor * 100u + 63u) / 127u); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
     case ROTO_SHOW_BRIGHT: case ROTO_SHOW_EDGE: case ROTO_SHOW_FENV: case ROTO_SHOW_DRIVE: {
         int32_t v = rt_sn.flt[rt_sn.show - ROTO_SHOW_BRIGHT];
         if (v == -128) { big[0] = '-'; big[1] = 0; break; }
@@ -369,7 +379,13 @@ static void rt_draw_centre(void)
     }
     default:               rt_fmt_u(big, rt_sn.hits); break;
     }
-    if (flt_show) {                                          /* the sound's own name for it */
+    if (dly_show) {
+        const char *l = RT_DSHOWN[rt_sn.show - ROTO_SHOW_DTIME];
+        uint32_t i;
+        for (i = 0; l[i]; i++) small[i] = l[i];
+        small[i] = 0;
+        small_col = RT_TRK_COL[rt_sn.sel];
+    } else if (flt_show) {                                   /* the sound's own name for it */
         const char *l = rt_sn.flt[rt_sn.show - ROTO_SHOW_BRIGHT] == -128
                       ? (rt_sn.show == ROTO_SHOW_FENV ? "NO ENV" : "NONE") : rt_sn.flt_lbl[rt_sn.show - ROTO_SHOW_BRIGHT];
         uint32_t i;
@@ -386,7 +402,10 @@ static void rt_draw_centre(void)
         small[0] = 'O'; small[1] = 'F'; small[2] = ' ';
         rt_fmt_u(small + 3, rt_sn.len);
     }
-    rt_text_b(RT_CX - (int32_t)rt_strlen(big) * 8, RT_CY - 18, big, 2, RT_TEXT);
+    if (rt_strlen(big) > 4u)                                 /* (5 wide, e.g. 1/16D: half size) */
+        rt_text_b(RT_CX - (int32_t)rt_strlen(big) * 4, RT_CY - 10, big, 1, RT_TEXT);
+    else
+        rt_text_b(RT_CX - (int32_t)rt_strlen(big) * 8, RT_CY - 18, big, 2, RT_TEXT);
     rt_text_s(RT_CX - RT_TEXT_S_W(small) / 2, RT_CY + 10, small, small_col);
 
     if (rt_sn.view == ROTO_VIEW_EUCLID && !rt_sn.show) {
@@ -632,11 +651,83 @@ static void rt_draw_flt(void)
     }
 }
 
+/* ------------------------------------------------------------- delay
+ * A clock face: one turn is a bar, 16 ticks for its 1/16s. The pink dot at the
+ * top is a hit; the white dots after it are its echoes, as far apart as the
+ * delay TIME, fading and spiralling in with the FEEDBACK. The ring's SEND is an
+ * arc in the track colour round the middle. Terminal lines along the bottom. */
+#define RT_DLY_R 84
+
+static void rt_draw_dly(void)
+{
+    int32_t i, x, y, x1, y1, step = (int32_t)((roto_dtime_96(rt_sn.dtime) * 1024u) / 96u);
+    uint32_t amp = 256u, fb = rt_sn.dfdbk > 118u ? 118u : rt_sn.dfdbk;
+
+    rt_circle(RT_CX, RT_CY, RT_DLY_R, RT_DOT);
+    for (i = 0; i < 16; i++) {                               /* the 1/16s; the beats longer */
+        rt_polar(i * 64 - 256, RT_DLY_R, &x, &y);
+        rt_polar(i * 64 - 256, RT_DLY_R - (i % 4 ? 4 : 9), &x1, &y1);
+        rt_line(x, y, x1, y1, i % 4 ? RT_DOT : RT_GREY);
+    }
+
+    for (i = 1; i <= 24; i++) {                              /* the echoes */
+        uint16_t c;
+        int32_t r = RT_DLY_R - 12 - i * 2;
+        amp = (amp * fb) / 100u;
+        if (amp < 10u || r < 50) break;
+        c = amp > 150u ? RT_TEXT : amp > 70u ? RT_GREY : RT_DOT;
+        rt_polar(-256 + i * step, r, &x, &y);
+        rt_rect(x - 1, y - 1, x + 2, y + 2, c);
+    }
+    rt_polar(-256, RT_DLY_R - 12, &x, &y);                   /* the hit */
+    rt_rect(x - 2, y - 2, x + 3, y + 3, RT_PINK);
+
+    {                                                        /* the ring's SEND */
+        int32_t end = (int32_t)((rt_sn.dsend * 1024u) / 127u), a;
+        for (a = 0; end > 0 && a <= end; a += 6) {
+            rt_polar(-256 + a, 44, &x, &y);
+            rt_px(x, y, RT_TRK_COL[rt_sn.sel]);
+        }
+    }
+
+    if (rt_sn.show) {
+        rt_rect(RT_CX - 36, RT_CY - 22, RT_CX + 37, RT_CY + 20, RT_BG);
+        rt_draw_centre();
+    } else {                                                 /* at rest: the time, big; the feedback under it */
+        const char *t = roto_dtime_name(rt_sn.dtime);
+        char fbs[12] = "FDBK ";
+        uint32_t n = rt_strlen(t);
+        if (n > 4u) rt_text_b(RT_CX - (int32_t)n * 4, RT_CY - 10, t, 1, RT_TEXT);
+        else rt_text_b(RT_CX - (int32_t)n * 8, RT_CY - 18, t, 2, RT_TEXT);
+        rt_fmt_u(fbs + 5, rt_sn.dfdbk);
+        n = rt_strlen(fbs); fbs[n] = '%'; fbs[n + 1] = 0;
+        rt_text_s(RT_CX - RT_TEXT_S_W(fbs) / 2, RT_CY + 10, fbs, RT_GREY);
+    }
+
+    {                                                        /* > terminal lines */
+        char a[32] = "> ", b[32] = "> SEND ";
+        uint32_t n;
+        const char *t = roto_dtime_name(rt_sn.dtime);
+        for (n = 0; t[n]; n++) a[2 + n] = t[n];
+        a[2 + n] = 0;
+        n = rt_strlen(a); a[n] = ' '; a[n + 1] = ' '; a[n + 2] = 'F'; a[n + 3] = 'D'; a[n + 4] = 'B'; a[n + 5] = 'K'; a[n + 6] = ' ';
+        rt_fmt_u(a + n + 7, rt_sn.dfdbk);
+        n = rt_strlen(a); a[n] = '%'; a[n + 1] = 0;
+        rt_fmt_u(b + 7, (rt_sn.dsend * 100u + 63u) / 127u);
+        n = rt_strlen(b); b[n] = '%'; b[n + 1] = ' '; b[n + 2] = ' '; b[n + 3] = 'C'; b[n + 4] = 'O'; b[n + 5] = 'L'; b[n + 6] = 'R'; b[n + 7] = ' ';
+        rt_fmt_u(b + n + 8, (rt_sn.dcolor * 100u + 63u) / 127u);
+        n = rt_strlen(b); b[n] = '%'; b[n + 1] = 0;
+        rt_text_s(6, RT_H - 21, a, RT_GREY);
+        rt_text_s(6, RT_H - 11, b, RT_GREY);
+    }
+}
+
 static void rt_draw_scene(void)
 {
     rt_draw_header();
     if (rt_sn.view == ROTO_VIEW_ENV) rt_draw_env();
     else if (rt_sn.view == ROTO_VIEW_FLT) rt_draw_flt();
+    else if (rt_sn.view == ROTO_VIEW_DLY) rt_draw_dly();
     else rt_draw_ring();
 }
 
@@ -708,6 +799,7 @@ static uint32_t rt_ring_sig(void)
     if (rt_sn.show) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); h = rt_fnv(h, rt_sn.div); h = rt_fnv(h, rt_sn.bpm); }
     else if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); }
     if (rt_sn.view == ROTO_VIEW_ENV) { uint32_t e; for (e = 0; e < 4u; e++) h = rt_fnv(h, rt_sn.env[e]); }
+    if (rt_sn.view == ROTO_VIEW_DLY) { h = rt_fnv(h, rt_sn.dtime); h = rt_fnv(h, rt_sn.dfdbk); h = rt_fnv(h, rt_sn.dcolor); h = rt_fnv(h, rt_sn.dsend); }
     if (rt_sn.view == ROTO_VIEW_FLT) { uint32_t e, c; for (e = 0; e < 4u; e++) { h = rt_fnv(h, (uint8_t)rt_sn.flt[e]); for (c = 0; rt_sn.flt_lbl[e][c]; c++) h = rt_fnv(h, (uint8_t)rt_sn.flt_lbl[e][c]); } }
     for (s = 0; s < rt_sn.len; s++)
         h = rt_fnv(h, (uint32_t)(rt_sn.on[s] | (rt_sn.ghost[s] << 1) | (rt_sn.note[s] << 2)));
@@ -744,7 +836,7 @@ int roto_ui_draw(int force, uint32_t now_ms)
             rt_repaint_rows(0, RT_HEAD_Y1);             /* the header only (K4) */
         else if (rt_sn.bpm != rt_shown_bpm && rt_sn.view == ROTO_VIEW_RING)
             rt_repaint(RT_BPM_X1 - 50, 4, RT_BPM_X1 + 1, 17);
-        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos && rt_sn.view != ROTO_VIEW_ENV && rt_sn.view != ROTO_VIEW_FLT) {
+        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos && rt_sn.view != ROTO_VIEW_ENV && rt_sn.view != ROTO_VIEW_FLT && rt_sn.view != ROTO_VIEW_DLY) {
             int32_t x0, y0, x1, y1;
             rt_playhead_box(rt_shown_pos < rt_sn.len ? rt_shown_pos : 0, rt_sn.len, &x0, &y0, &x1, &y1);
             rt_repaint(x0, y0, x1, y1);
