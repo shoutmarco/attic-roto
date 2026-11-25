@@ -98,7 +98,7 @@ extern roto_seq_t roto;
 void roto_seq_init(void);
 /* a new random Weatherall-style pattern and sound plan from seed (stopped: set the sounds, then roto_play) */
 void roto_seq_generate(uint32_t seed);
-/* NEW: everything empty and plain — rings of 16 at 1/16, DRUM KIT / SUB BASS / TINE EP / BELL,
+/* NEW: everything empty and plain — rings of 16 at 1/16, DRUM KIT / SUB BASS / TINE EP / SINE KEY,
  * 120 BPM, straight, EVOLVE off, delay 1/8D (stopped: set the sounds with roto_apply_sounds) */
 void roto_seq_blank(void);
 /* (main.c) give the tracks roto.snd[] and the song roto's tempo and delay */

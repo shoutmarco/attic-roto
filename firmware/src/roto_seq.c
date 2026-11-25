@@ -79,15 +79,16 @@ static uint32_t pick_spaced(const roto_track_t *k, const uint8_t w[4])
 }
 
 /* the sounds each role may get: engine, preset (engines.c ENGINES[] numbering), level.
- * Levels (P_LEVEL: 112 = 0 dB, 0.5 dB a step) from rendering each one in its role
- * (tests/roto_render.c): drums loudest, bass about 3 dB under, stabs and blips further back. */
-static const uint8_t SND_DRUMS[][3] = {{10, 0, 111}, {10, 1, 111}, {10, 2, 114}, {10, 3, 111}};          /* DRUM KIT, DEEP KIT, TIGHT KIT, PERC KIT */
-static const uint8_t SND_BASS[][3]  = {{0, 7, 106}, {0, 4, 116}, {12, 2, 122}, {6, 0, 121},
-                                       {5, 2, 117}, {0, 2, 114}, {3, 1, 119}};                            /* SUB, ACID, FM BASS, FAT BASS, WOW BASS, SQR BASS, WAVE BASS */
+ * Warm ones only (measured in their roles with tests/roto_render.c: under ~3 % of the energy
+ * above 4 kHz; the bells, METAL, GLITCH, ARP 8BIT, RAVE, RESO, WOW BASS and the bright drum
+ * kit are out). Levels (P_LEVEL: 112 = 0 dB, 0.5 dB a step) from the same renders: drums
+ * loudest, bass about 3 dB under, chords and blips further back. */
+static const uint8_t SND_DRUMS[][3] = {{10, 0, 111}, {10, 1, 111}, {10, 3, 111}};                 /* DRUM KIT, DEEP KIT, PERC KIT */
+static const uint8_t SND_BASS[][3]  = {{0, 7, 106}, {12, 2, 122}, {6, 0, 121}};                  /* SUB BASS, FM BASS, FAT BASS */
 static const uint8_t SND_STAB[][3]  = {{12, 0, 104}, {2, 1, 104}, {7, 1, 110}, {0, 3, 105},
-                                       {0, 6, 110}, {2, 3, 105}, {12, 6, 109}};                           /* TINE EP, ORGAN, JAZZ PERC, PWM STR, RAVE, RESO, FM ORGAN */
-static const uint8_t SND_BLIP[][3]  = {{9, 4, 127}, {9, 1, 127}, {12, 1, 103}, {9, 0, 121},
-                                       {6, 3, 112}, {11, 3, 118}, {2, 4, 107}, {8, 1, 112}, {3, 2, 106}};  /* KALIMBA, MARIMBA, BELL, BELL TREE, RING BELL, METAL, PHASE BELL, GLITCH, ARP 8BIT */
+                                       {12, 6, 109}};                                             /* TINE EP, ORGAN, JAZZ PERC, PWM STR, FM ORGAN */
+static const uint8_t SND_BLIP[][3]  = {{0, 5, 105}, {0, 8, 106}, {9, 5, 112}, {12, 5, 115},
+                                       {12, 7, 114}, {7, 3, 113}, {9, 4, 116}};                   /* SINE KEY, PLUCK, HAND DRUM, FM MARIMBA, FM PLUCK, SOFT FLUTE, KALIMBA */
 #define NSND(a) ((uint32_t)(sizeof a / sizeof a[0]))
 #define ENG_DRUM 10u                                            /* (engines.c: DRUM) */
 
@@ -154,8 +155,8 @@ void roto_seq_generate(uint32_t seed)
     sc = MODE_SC[roto.mode];
     roto.bpm = (uint8_t)(112u + rnd(13u));
     roto.dtime = 10;                                             /* params.c N_DTIME: 1/8D */
-    roto.dfdbk = (uint8_t)(62u + rnd(15u));                     /* dub: long tails, 62..76 */
-    roto.swing = (uint8_t)(52u + rnd(7u));                       /* a light shuffle, 52..58 */
+    roto.dfdbk = (uint8_t)(55u + rnd(14u));                     /* a dubby tail, 55..68 */
+    roto.swing = (uint8_t)(54u + rnd(7u));                       /* a shuffle you feel more than hear, 54..60 */
     roto.evolve = 50;
 
     /* 1: drums, 16 steps, minimal. Kick on the beats (sometimes the last one pushed),
@@ -165,7 +166,7 @@ void roto_seq_generate(uint32_t seed)
     for (s = 0; s < 16u; s += 4u) put(k, s, 36, s ? 104u + rnd(12u) : 120u);
     if (chance(30)) { k->step[12].on = 0; put(k, chance(50) ? 11u : 14u, 36, 100); }
     n = 0;
-    for (s = 2; s < 16u; s += 4u) if (!k->step[s].on && n < 2u && chance(45)) { put(k, s, 46, 62u + rnd(28u)); n++; }
+    for (s = 2; s < 16u; s += 4u) if (!k->step[s].on && n < 2u && chance(45)) { put(k, s, 46, 50u + rnd(26u)); n++; }   /* (soft) */
     n = chance(60) ? 1u : 0u;
     for (i = 0; i < n; i++) {
         uint32_t note, vel;
@@ -188,7 +189,7 @@ void roto_seq_generate(uint32_t seed)
     /* 2: bass, a length that drifts against the drums; root-heavy but it moves,
      * the first note leaning on; three or four notes, never two in a row, maybe a ghost. */
     k = &roto.trk[1];
-    k->len = L_BASS[rnd(4u)]; k->div = 1; k->gate = 45;
+    k->len = L_BASS[rnd(4u)]; k->div = 1; k->gate = 35;   /* (short and round) */
     base = 36u + pc;
     if (pc >= 7u) base -= 12u;
     k->fill_note = (uint8_t)base;
@@ -209,9 +210,8 @@ void roto_seq_generate(uint32_t seed)
         pct = 45u + rnd(25u);
         if (s < k->len) ghost(k, s, base, vel, pct);
     }
-    {                                                            /* dub: the deep ones (SUB, FM, FAT, WOW) */
-        static const uint8_t DUB_BASS[4] = {0, 2, 3, 4};
-        sound(&roto.snd[1], SND_BASS[DUB_BASS[rnd(4u)]], 0, 0, 0, 0);
+    {
+        sound(&roto.snd[1], SND_BASS[rnd(NSND(SND_BASS))], 0, 0, 0, 0);
     }
 
     /* 3: dub stabs, minor 7th chords that fit the mode, one or two, far apart. */
@@ -228,7 +228,7 @@ void roto_seq_generate(uint32_t seed)
             if (!k->step[s].on) put(k, s, 48u + pc + root, vel);
         }
     }
-    sound(&roto.snd[2], SND_STAB[rnd(NSND(SND_STAB))], 84, 56, 24, -22);   /* dub: deep in the delay and reverb */
+    sound(&roto.snd[2], SND_STAB[rnd(NSND(SND_STAB))], 72, 48, 20, -22);   /* (into the delay and reverb, not drowned) */
 
     /* 4: blips, minor pentatonic up high, sparse. */
     k = &roto.trk[3];
@@ -243,23 +243,23 @@ void roto_seq_generate(uint32_t seed)
             if (!k->step[s].on) put(k, s, 60u + pc + deg + up, vel);
         }
     }
-    sound(&roto.snd[3], SND_BLIP[rnd(NSND(SND_BLIP))], 88, 58, 0, 26);
+    sound(&roto.snd[3], SND_BLIP[rnd(NSND(SND_BLIP))], 74, 50, 0, 26);
 
-    /* 5: more drums on the same kit — hats and percussion on their own odd length,
-     * so they turn against the kick (drawn after everything above: rings 1-4 as before) */
+    /* 5: the groove — soft closed hats and the odd rim on the in-between 1/16s (the ones the
+     * swing moves), quiet, only sometimes there; 8, 12 or 16 steps so the shuffle lines up */
     {
-        static const uint8_t L_PERC[5] = {5, 7, 9, 11, 12};
-        static const uint8_t PERC[6] = {42, 42, 46, 37, 39, 42};
+        static const uint8_t L_GRV[3] = {8, 12, 16};
+        static const uint8_t W_OFF[4] = {0, 3, 0, 3};
         k = &roto.trk[4];
-        k->len = L_PERC[rnd(5u)]; k->div = 1; k->gate = 25; k->fill_note = 42;
-        n = 1u + rnd(2u);
-        base = rnd(k->len);
+        k->len = L_GRV[rnd(3u)]; k->div = 1; k->gate = 25; k->fill_note = 42;
+        n = 2u + rnd(2u);
         for (i = 0; i < n; i++) {
-            s = (base + (k->len * i) / n + (i ? rnd(2u) : 0u)) % k->len;
-            {
-                uint32_t note = PERC[rnd(6u)], vel = 52u + rnd(30u);
-                if (!k->step[s].on) put(k, s, note, vel);
-            }
+            uint32_t note, vel, pct;
+            s = pick_spaced(k, W_OFF);
+            note = chance(75) ? 42u : 37u;
+            vel = 34u + rnd(22u);
+            pct = 55u + rnd(31u);
+            if (s < k->len) ghost(k, s, note, vel, pct);
         }
     }
     /* 6: a counter-line on the blip sound — a few notes higher up, its own rhythm */
@@ -304,8 +304,8 @@ void roto_seq_blank(void)
     roto.trk[2].chord[0] = 3; roto.trk[2].chord[1] = 7; roto.trk[2].chord[2] = 10;
     sound(&roto.snd[0], SND_DRUMS[0], 0, 14, 0, 0);              /* DRUM KIT */
     sound(&roto.snd[1], SND_BASS[0], 0, 0, 0, 0);                /* SUB BASS */
-    sound(&roto.snd[2], SND_STAB[0], 64, 40, 24, -22);           /* TINE EP */
-    sound(&roto.snd[3], SND_BLIP[2], 72, 46, 0, 26);             /* BELL */
+    sound(&roto.snd[2], SND_STAB[0], 64, 40, 20, -22);           /* TINE EP */
+    sound(&roto.snd[3], SND_BLIP[0], 72, 46, 0, 26);             /* SINE KEY */
     for (t = 0; t < ROTO_TRACKS; t++) home_save(&roto.trk[t]);
 }
 
@@ -468,7 +468,7 @@ static void throw_bar(void)
     if (roto.throw_trk < ROTO_PARTS) {
         return;                                              /* (one at a time) */
     }
-    if (ev_dice(100u) < (uint32_t)roto.evolve / 4u) {        /* evolve 50: a throw in about 1 bar of 8 */
+    if (ev_dice(100u) < (uint32_t)roto.evolve / 6u) {        /* evolve 50: a throw in about 1 bar of 12 */
         uint32_t t = 2u + ev_dice(2u);
         uint32_t d = (uint32_t)roto.snd[t].dly + 50u, fb = (uint32_t)roto.dfdbk + 16u;
         roto.throw_trk = (uint8_t)t;
