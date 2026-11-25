@@ -83,7 +83,7 @@ static void host_roto_boot(uint32_t seed)
 {
     uint32_t t, i;
     roto_seq_generate(seed);
-    for (t = 0; t < ROTO_TRACKS; t++) {
+    for (t = 0; t < ROTO_PARTS; t++) {
         track_t *tk = &trk[t];
         roto_sound_t *sd = &roto.snd[t];
         const engine_t *e;
@@ -160,7 +160,7 @@ int main(int argc, char **argv)
     printf("seed %u: %s %s, %u BPM, delay 1/8D feedback %u\n", seed, PC[roto.root], MODE[roto.mode], roto.bpm, roto.dfdbk);
     for (t = 0; t < ROTO_TRACKS; t++) {
         roto_track_t *k = &roto.trk[t];
-        printf("  ring %u %-11s len %2u div %u gate %2u%%:", t + 1u, roto.snd[t].name, k->len, k->div, k->gate);
+        printf("  ring %u %-11s len %2u div %u gate %2u%%:", t + 1u, roto.snd[k->part].name, k->len, k->div, k->gate);
         for (i = 0; i < k->len; i++)
             if (k->step[i].on) printf(" %u:%s%d", i + 1u, PC[k->step[i].note % 12u], k->step[i].note / 12 - 1);
         printf("\n");

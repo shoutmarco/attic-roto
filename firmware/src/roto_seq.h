@@ -13,7 +13,8 @@
 
 #define ROTO_VERSION "v0.2"   /* attic-roto's own version (the splash, MENU > ABOUT) */
 
-#define ROTO_TRACKS  4
+#define ROTO_TRACKS  6    /* rings */
+#define ROTO_PARTS   4    /* the synth's sounds: rings 1-4 play their own, ring 5 the drums, ring 6 the blips */
 #define ROTO_STEPS  32    /* max steps per ring (32: memory; the patterns use up to 16) */
 #define ROTO_CHORD   3    /* extra chord notes per step */
 #define ROTO_POS_START 0xFFu   /* pos before the first step after PLAY */
@@ -37,6 +38,7 @@ typedef struct {
     uint8_t  sub;        /* audio side: sixteenths into the current step (0..div-1) */
     uint32_t gate_left;  /* samples until the held notes are released */
     uint8_t  fill_note;  /* the note FILL adds when the ring has no hits to copy */
+    uint8_t  part;       /* the sound (synth part 0..3) this ring plays */
     uint8_t  fill_n;     /* the hits FILL added, newest last (taken away first, newest first) */
     uint8_t  fill_at[8];
     uint8_t  rot;        /* how far ROTATE has turned the pattern (0..len-1, for display) */
@@ -54,7 +56,7 @@ typedef struct {
 
 typedef struct {
     roto_track_t trk[ROTO_TRACKS];
-    roto_sound_t snd[ROTO_TRACKS];
+    roto_sound_t snd[ROTO_PARTS];
     uint8_t  running;
     uint8_t  bpm;        /* 40..240 */
     uint8_t  sel;        /* selected track 0..3 */
@@ -69,12 +71,12 @@ typedef struct {
     /* audio side */
     uint32_t acc16;      /* samples into the current 1/16 */
     uint32_t n16;        /* 1/16s since PLAY */
-    uint8_t  throw_trk;  /* the ring in a dub throw (0xFF: none) */
+    uint8_t  throw_trk;  /* the sound (part) in a dub throw (0xFF: none) */
     uint8_t  throw_left; /* 1/16s until it ends */
     uint32_t ev_rs;      /* EVOLVE's dice */
-    uint8_t  env[ROTO_TRACKS][4];   /* each ring's sound's envelope, A D S R 0..127 (a copy of the track's P_ATK..P_REL, for the screen) */
-    int8_t   flt[ROTO_TRACKS][4];   /* FILTER, for the screen, K1..K4: bright, edge 0..100, env -100..100, drive 0..100 (-128: the sound has none) */
-    char     flt_lbl[ROTO_TRACKS][4][6];   /* the sound's own names for them ("CUT", "RES", ...) */
+    uint8_t  env[ROTO_PARTS][4];   /* each envelope, A D S R 0..127 (a copy of the track's P_ATK..P_REL, for the screen) */
+    int8_t   flt[ROTO_PARTS][4];   /* FILTER, for the screen, K1..K4: bright, edge 0..100, env -100..100, drive 0..100 (-128: the sound has none) */
+    char     flt_lbl[ROTO_PARTS][4][6];   /* the sound's own names for them ("CUT", "RES", ...) */
 } roto_seq_t;
 
 #define ROTO_VIEW_RING   0

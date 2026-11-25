@@ -37,6 +37,7 @@ void roto_seq_init(void)
     roto.throw_trk = 0xFF;
     roto.ev_rs = 1u;
     for (t = 0; t < ROTO_TRACKS; t++) {
+        roto.trk[t].part = (uint8_t)(t < ROTO_PARTS ? t : t == 4u ? 0u : 3u);
         roto.trk[t].len = 16;
         roto.trk[t].div = 1;
         roto.trk[t].gate = 50;
@@ -245,6 +246,40 @@ void roto_seq_generate(uint32_t seed)
     }
     sound(&roto.snd[3], SND_BLIP[rnd(NSND(SND_BLIP))], 72, 46, 0, 26);
 
+    /* 5: more drums on the same kit — hats and percussion on their own odd length,
+     * so they turn against the kick (drawn after everything above: rings 1-4 as before) */
+    {
+        static const uint8_t L_PERC[5] = {5, 7, 9, 11, 12};
+        static const uint8_t PERC[6] = {42, 42, 46, 37, 39, 42};
+        k = &roto.trk[4];
+        k->len = L_PERC[rnd(5u)]; k->div = 1; k->gate = 25; k->fill_note = 42;
+        n = 2u + rnd(3u);
+        base = rnd(k->len);
+        for (i = 0; i < n; i++) {
+            s = (base + (k->len * i) / n + (i ? rnd(2u) : 0u)) % k->len;
+            {
+                uint32_t note = PERC[rnd(6u)], vel = 52u + rnd(30u);
+                if (!k->step[s].on) put(k, s, note, vel);
+            }
+        }
+    }
+    /* 6: a counter-line on the blip sound — a few notes higher up, its own rhythm */
+    {
+        static const uint8_t L_CTR[5] = {3, 5, 6, 9, 10};
+        k = &roto.trk[5];
+        k->len = L_CTR[rnd(5u)]; k->div = (uint8_t)(chance(50) ? 2u : 1u); k->gate = 25;
+        k->fill_note = (uint8_t)(72u + pc);
+        n = 1u + rnd(2u);
+        base = rnd(k->len);
+        for (i = 0; i < n; i++) {
+            s = (base + (k->len * i) / n) % k->len;
+            {
+                uint32_t deg = PENTA[rnd(5u)], vel = 70u + rnd(30u);
+                if (!k->step[s].on) put(k, s, 72u + pc + deg, vel);
+            }
+        }
+    }
+
     for (t = 0; t < ROTO_TRACKS; t++) home_save(&roto.trk[t]);
     roto.ev_rs = rs_next() | 1u;
     roto.sel = 0;                                                /* (stopped: the caller sets the sounds, then PLAY) */
@@ -252,8 +287,8 @@ void roto_seq_generate(uint32_t seed)
 
 void roto_seq_blank(void)
 {
-    static const uint8_t FILLN[ROTO_TRACKS] = {36, 36, 48, 72};      /* kick, C2, C3, C5 */
-    static const uint8_t GATE[ROTO_TRACKS] = {25, 55, 30, 25};
+    static const uint8_t FILLN[ROTO_TRACKS] = {36, 36, 48, 72, 42, 79};      /* kick, C2, C3, C5, closed hat, G5 */
+    static const uint8_t GATE[ROTO_TRACKS] = {25, 55, 30, 25, 25, 25};
     uint32_t t;
     roto_seq_init();
     roto.bpm = 120;
@@ -279,7 +314,8 @@ void roto_seq_blank(void)
 static void release(uint32_t t, roto_track_t *k)
 {
     uint32_t i;
-    for (i = 0; i < k->nheld; i++) roto_note_off(t, k->held[i]);
+    for (i = 0; i < k->nheld; i++) roto_note_off(k->part, k->held[i]);
+    (void)t;
     k->nheld = 0;
     k->gate_left = 0;
 }
@@ -303,12 +339,12 @@ static void fire(uint32_t t, roto_track_t *k, uint32_t step_len)
     if (k->prob < 100u && audio_dice(100u) >= k->prob) return;
     if (st->chance && audio_dice(100u) >= st->chance) return;
     k->held[k->nheld++] = st->note;
-    roto_note_on(t, st->note, st->vel ? st->vel : 100u);
+    roto_note_on(k->part, st->note, st->vel ? st->vel : 100u);
     for (i = 0; i < ROTO_CHORD; i++) {
         int32_t n = (int32_t)st->note + k->chord[i];
         if (!k->chord[i] || n < 0 || n > 127) continue;
         k->held[k->nheld++] = (uint8_t)n;
-        roto_note_on(t, (uint8_t)n, st->vel ? st->vel : 100u);
+        roto_note_on(k->part, (uint8_t)n, st->vel ? st->vel : 100u);
     }
     g = (step_len * (k->gate ? k->gate : 50u)) / 100u;
     k->gate_left = g ? g : 1u;
@@ -427,7 +463,7 @@ static void evolve_once(void)
 /* -------- dub throws: now and then a stab or blip ring is thrown into the delay for a bar */
 static void throw_bar(void)
 {
-    if (roto.throw_trk < ROTO_TRACKS) {
+    if (roto.throw_trk < ROTO_PARTS) {
         return;                                              /* (one at a time) */
     }
     if (ev_dice(100u) < (uint32_t)roto.evolve / 6u) {        /* evolve 50: a throw in about 1 bar of 12 */
@@ -442,7 +478,7 @@ static void throw_bar(void)
 
 static void throw_tick(void)
 {
-    if (roto.throw_trk >= ROTO_TRACKS || !roto.throw_left) return;
+    if (roto.throw_trk >= ROTO_PARTS || !roto.throw_left) return;
     if (--roto.throw_left == 0u) {
         roto_fx_send(roto.throw_trk, roto.snd[roto.throw_trk].dly);
         roto_fx_feedback(roto.dfdbk);
@@ -482,7 +518,7 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
     if (!roto.running) {
         for (t = 0; t < ROTO_TRACKS; t++)
             if (roto.trk[t].nheld) release(t, &roto.trk[t]);
-        if (roto.throw_trk < ROTO_TRACKS) { roto.throw_left = 1; throw_tick(); }
+        if (roto.throw_trk < ROTO_PARTS) { roto.throw_left = 1; throw_tick(); }
         return;
     }
     six = (sample_rate * 15u) / (roto.bpm ? roto.bpm : 120u);
@@ -594,11 +630,11 @@ static void fill_once(uint32_t trk, int32_t dir)
             }
         }
         st = &k->step[n ? (best + bestv / 2u) % k->len : 0u];
-        if (!n || roto.snd[trk].eng == 10u)          /* (engines.c: 10 = DRUM) */
+        if (!n || roto.snd[k->part].eng == 10u)      /* (engines.c: 10 = DRUM) */
             st->note = k->fill_note ? k->fill_note : 60u;
         else
             st->note = k->step[best].note;
-        st->vel = n && roto.snd[trk].eng != 10u ? k->step[best].vel : 64u;
+        st->vel = n && roto.snd[k->part].eng != 10u ? k->step[best].vel : 64u;
         st->on = 1;
         if (k->fill_n >= sizeof k->fill_at) {        /* (remember the newest 8) */
             uint32_t i;

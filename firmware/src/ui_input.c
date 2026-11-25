@@ -1558,15 +1558,16 @@ static void ui_input(void)
          * so the sequencer knobs below see nothing on that screen) */
         static const uint8_t ENV_P[4] = {P_ATK, P_DEC, P_SUS, P_REL};
         uint32_t t, e;
-        for (t = 0; t < ROTO_TRACKS && t < NTRK; t++)        /* (the screen's copy follows the sound) */
+        uint32_t part = roto.sel < ROTO_TRACKS ? roto.trk[roto.sel].part : 0u;
+        for (t = 0; t < ROTO_PARTS && t < NTRK; t++)         /* (the screen's copy follows the sound) */
             for (e = 0; e < 4u; e++) roto.env[t][e] = (uint8_t)clamp(trk[t].p[ENV_P[e]], 0, 127);
-        if (roto.view == ROTO_VIEW_ENV && roto.sel < NTRK) {
-            track_t *tk = &trk[roto.sel];
+        if (roto.view == ROTO_VIEW_ENV && part < NTRK) {          /* (rings 5 and 6: the sound they share) */
+            track_t *tk = &trk[part];
             for (e = 0; e < 4u; e++) {
                 int32_t v = panel_enc(EN_K1 + (int32_t)e);
                 if (!v) continue;
                 tk->p[ENV_P[e]] = (int16_t)clamp(tk->p[ENV_P[e]] + v * 2, 0, 127);
-                roto.env[roto.sel][e] = (uint8_t)tk->p[ENV_P[e]];
+                roto.env[part][e] = (uint8_t)tk->p[ENV_P[e]];
                 roto_ui_show(ROTO_SHOW_ATK + e, fm1_ms);
             }
         }
@@ -1574,7 +1575,7 @@ static void ui_input(void)
     if (roto.view == ROTO_VIEW_DLY) {   /* DELAY: K1 TIME, K2 FEEDBACK, K3 the ring's SEND, K4 COLOUR.
          * roto.dtime / dfdbk / snd[].dly are what dub throws come back to, so they're set first. */
         int32_t v, i;
-        uint32_t sel2 = roto.sel < ROTO_TRACKS ? roto.sel : 0u;
+        uint32_t sel2 = roto.sel < ROTO_TRACKS ? roto.trk[roto.sel].part : 0u;   /* (the ring's sound) */
         if ((v = panel_enc(EN_K1)) != 0) {
             for (i = 0; i < (v < 0 ? -v : v); i++) roto.dtime = (uint8_t)roto_dtime_step(roto.dtime, v);
             song.g[G_DTIME] = roto.dtime;
@@ -1582,7 +1583,7 @@ static void ui_input(void)
         }
         if ((v = panel_enc(EN_K2)) != 0) {
             roto.dfdbk = (uint8_t)clamp((int32_t)roto.dfdbk + v * 2, 0, 120);
-            if (roto.throw_trk >= ROTO_TRACKS) song.g[G_DFDBK] = roto.dfdbk;
+            if (roto.throw_trk >= ROTO_PARTS) song.g[G_DFDBK] = roto.dfdbk;
             roto_ui_show(ROTO_SHOW_DFDBK, fm1_ms);
         }
         if ((v = panel_enc(EN_K3)) != 0) {
@@ -1600,7 +1601,7 @@ static void ui_input(void)
          * BRIGHT / EDGE / DRIVE are whichever of the sound's own settings do that job
          * (roto_tone_map); the screen gets them in percent, with their names. */
         uint32_t t, e;
-        for (t = 0; t < ROTO_TRACKS && t < NTRK; t++) {
+        for (t = 0; t < ROTO_PARTS && t < NTRK; t++) {
             const engine_t *en = ENGINES[trk[t].eng_req % NENGINES];
             uint8_t map[3];
             int has_env;
@@ -1620,8 +1621,8 @@ static void ui_input(void)
                 roto.flt_lbl[t][e][c] = 0;
             }
         }
-        if (roto.view == ROTO_VIEW_FLT && roto.sel < NTRK) {
-            track_t *tk = &trk[roto.sel];
+        if (roto.view == ROTO_VIEW_FLT && roto.sel < ROTO_TRACKS && roto.trk[roto.sel].part < NTRK) {
+            track_t *tk = &trk[roto.trk[roto.sel].part];
             const engine_t *en = ENGINES[tk->eng_req % NENGINES];
             uint8_t map[3];
             int has_env;
@@ -1722,7 +1723,7 @@ static void ui_input(void)
                 int busy = 1;
                 roto_stop();                                  /* (the audio side lets go of its notes ...) */
                 while (busy && fm1_ms - t0 < 100u) {          /* (... wait for that, up to 0.1 s) */
-                    busy = roto.throw_trk < ROTO_TRACKS;
+                    busy = roto.throw_trk < ROTO_PARTS;
                     for (t = 0; t < ROTO_TRACKS; t++) busy |= roto.trk[t].nheld != 0u;
                 }
                 roto_seq_blank();

@@ -119,7 +119,7 @@ static void roto_boot(void)
 void roto_apply_sounds(void)
 {
     uint32_t i, t;
-    for (t = 0; t < ROTO_TRACKS && t < NTRK; t++) {
+    for (t = 0; t < ROTO_PARTS && t < NTRK; t++) {
         track_t *tk = &trk[t];
         roto_sound_t *sd = &roto.snd[t];
         const engine_t *e;

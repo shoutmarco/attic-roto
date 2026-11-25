@@ -41,6 +41,8 @@ static const uint16_t RT_TRK_COL[ROTO_TRACKS] = {
     RT_RGB(82, 178, 65),    /* 2 green  */
     RT_RGB(164, 68, 123),   /* 3 pink   */
     RT_RGB(40, 140, 168),   /* 4 cyan   */
+    RT_RGB(190, 160, 64),   /* 5 sand   (more drums) */
+    RT_RGB(128, 106, 196),  /* 6 violet (a counter-line on the blips) */
 };
 /* the ring itself: the track colour at about a fifth */
 /* ghost notes: the track colour at about half */
@@ -49,12 +51,16 @@ static const uint16_t RT_TRK_HALF[ROTO_TRACKS] = {
     RT_RGB(44, 98, 36),
     RT_RGB(90, 38, 68),
     RT_RGB(22, 78, 94),
+    RT_RGB(104, 88, 35),
+    RT_RGB(70, 58, 108),
 };
 static const uint16_t RT_TRK_RING[ROTO_TRACKS] = {
     RT_RGB(38, 23, 10),
     RT_RGB(16, 38, 12),
     RT_RGB(36, 14, 27),
     RT_RGB(8, 31, 37),
+    RT_RGB(42, 35, 14),
+    RT_RGB(28, 23, 43),
 };
 
 /* ------------------------------------------------------------- layout */
@@ -65,9 +71,9 @@ static const uint16_t RT_TRK_RING[ROTO_TRACKS] = {
 #define RT_R       80          /* ring radius */
 #define RT_R_LABEL 95          /* note names sit on this radius */
 #define RT_RULE_Y  19
-#define RT_BOX_X   196         /* the four track boxes */
-#define RT_BOX_W   10
-#define RT_BPM_X1  190         /* BPM text ends here */
+#define RT_BOX_X   182         /* the six ring boxes */
+#define RT_BOX_W   9
+#define RT_BPM_X1  176         /* BPM text ends here */
 
 /* ------------------------------------------------------------- clip */
 static int32_t rt_cx0, rt_cy0, rt_cx1, rt_cy1;      /* inclusive x0,y0 / exclusive x1,y1 */
@@ -254,7 +260,7 @@ static struct {
     uint8_t sel, len, pos, div, bpm, hits, view, rot, prob, show;
     uint8_t env[4];
     int8_t flt[4];
-    uint8_t dtime, dfdbk, dcolor, dsend;
+    uint8_t dtime, dfdbk, dcolor, dsend, part;
     char flt_lbl[4][6];
     uint8_t on[ROTO_STEPS];
     uint8_t note[ROTO_STEPS];
@@ -273,13 +279,14 @@ static void rt_snapshot(void)
     rt_sn.view = roto.view;
     rt_sn.rot = k->rot;
     rt_sn.prob = k->prob;
-    { uint32_t e; for (e = 0; e < 4u; e++) rt_sn.env[e] = (uint8_t)(roto.env[rt_sn.sel][e] & 127u); }
-    rt_sn.dtime = roto.dtime; rt_sn.dfdbk = roto.dfdbk; rt_sn.dcolor = roto.dcolor; rt_sn.dsend = roto.snd[rt_sn.sel].dly;
+    rt_sn.part = (uint8_t)(k->part < ROTO_PARTS ? k->part : 0u);
+    { uint32_t e; for (e = 0; e < 4u; e++) rt_sn.env[e] = (uint8_t)(roto.env[rt_sn.part][e] & 127u); }
+    rt_sn.dtime = roto.dtime; rt_sn.dfdbk = roto.dfdbk; rt_sn.dcolor = roto.dcolor; rt_sn.dsend = roto.snd[rt_sn.part].dly;
     {
         uint32_t e, c;
         for (e = 0; e < 4u; e++) {
-            rt_sn.flt[e] = roto.flt[rt_sn.sel][e];
-            for (c = 0; c < 5u && roto.flt_lbl[rt_sn.sel][e][c]; c++) rt_sn.flt_lbl[e][c] = roto.flt_lbl[rt_sn.sel][e][c];
+            rt_sn.flt[e] = roto.flt[rt_sn.part][e];
+            for (c = 0; c < 5u && roto.flt_lbl[rt_sn.part][e][c]; c++) rt_sn.flt_lbl[e][c] = roto.flt_lbl[rt_sn.part][e][c];
             rt_sn.flt_lbl[e][c] = 0;
         }
     }
@@ -301,7 +308,7 @@ static void rt_draw_header(void)
 
     buf[0] = (char)('1' + rt_sn.sel); buf[1] = 0;
     x = rt_text_b(4, 4, buf, 1, col);
-    x = rt_text_b(x + 6, 4, roto.snd[rt_sn.sel].name[0] ? roto.snd[rt_sn.sel].name : "RING", 1, col);
+    x = rt_text_b(x + 6, 4, roto.snd[rt_sn.part].name[0] ? roto.snd[rt_sn.part].name : "RING", 1, col);
     if (rt_sn.view == ROTO_VIEW_EUCLID) {               /* "EUCLID 3/5", as the reference */
         char e[16] = "EUCLID ";
         uint32_t n;
@@ -327,13 +334,13 @@ static void rt_draw_header(void)
         uint16_t tc = RT_TRK_COL[t];
         char d[2] = {(char)('1' + t), 0};
         if (t == (int32_t)rt_sn.sel) {
-            rt_rect(bx, 5, bx + 9, 16, tc);
+            rt_rect(bx, 5, bx + 8, 16, tc);
             rt_text_s(bx + 2, 7, d, RT_BG);
         } else {
-            rt_hspan(bx, bx + 9, 5, tc);
-            rt_hspan(bx, bx + 9, 15, tc);
+            rt_hspan(bx, bx + 8, 5, tc);
+            rt_hspan(bx, bx + 8, 15, tc);
             rt_rect(bx, 5, bx + 1, 16, tc);
-            rt_rect(bx + 8, 5, bx + 9, 16, tc);
+            rt_rect(bx + 7, 5, bx + 8, 16, tc);
             rt_text_s(bx + 2, 7, d, tc);
         }
     }
@@ -790,8 +797,8 @@ static uint32_t rt_head_sig(void)
     h = rt_fnv(h, rt_sn.div);
     h = rt_fnv(h, rt_sn.view);
     if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.hits); h = rt_fnv(h, rt_sn.len); }
-    for (s = 0; s < sizeof roto.snd[0].name && roto.snd[rt_sn.sel].name[s]; s++)
-        h = rt_fnv(h, (uint8_t)roto.snd[rt_sn.sel].name[s]);
+    for (s = 0; s < sizeof roto.snd[0].name && roto.snd[rt_sn.part].name[s]; s++)
+        h = rt_fnv(h, (uint8_t)roto.snd[rt_sn.part].name[s]);
     return h;
 }
 
