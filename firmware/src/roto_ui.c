@@ -266,7 +266,7 @@ static struct {
     uint8_t on[ROTO_STEPS];
     uint8_t note[ROTO_STEPS];
     uint8_t ghost[ROTO_STEPS];
-    uint8_t g_swing, g_evolve, g_dub;
+    uint8_t g_swing, g_evolve, g_dub, g_rand, g_prob;
     uint16_t gnum;
     uint8_t naming, name_pos, save_cur;
     uint8_t a_mode, a_rate, a_range, a_len, a_n, a_idx;
@@ -304,7 +304,7 @@ static void rt_snapshot(void)
             rt_sn.flt_lbl[e][c] = 0;
         }
     }
-    rt_sn.g_swing = roto.swing; rt_sn.g_evolve = roto.evolve; rt_sn.g_dub = roto.dub;
+    rt_sn.g_swing = roto.swing; rt_sn.g_evolve = roto.evolve; rt_sn.g_dub = roto.dub; rt_sn.g_rand = roto.grand; rt_sn.g_prob = roto.gprob;
     {
         uint32_t j;
         rt_sn.a_mode = k->arp; rt_sn.a_rate = k->arp_rate; rt_sn.a_range = k->arp_range; rt_sn.a_len = k->arp_len;
@@ -893,11 +893,12 @@ static void rt_draw_flt(void)
 #define RT_AD     RT_RGB(88, 84, 52)
 /* GROOVE: each part its own colour, bright (turning) / mid / dim: TEMPO yellow, SWING orange,
  * EVOLVE green, DUB violet */
-static const uint16_t RT_GC[4][3] = {
+static const uint16_t RT_GC[5][3] = {
     {RT_RGB(240, 230, 148), RT_RGB(176, 168, 104), RT_RGB(88, 84, 52)},
     {RT_RGB(248, 160, 72),  RT_RGB(184, 112, 48),  RT_RGB(84, 52, 24)},
     {RT_RGB(120, 224, 140), RT_RGB(72, 160, 92),   RT_RGB(30, 70, 40)},
     {RT_RGB(184, 128, 248), RT_RGB(128, 88, 184),  RT_RGB(56, 40, 84)},
+    {RT_RGB(96, 208, 240),  RT_RGB(64, 144, 168),  RT_RGB(28, 64, 76)},
 };
 
 static void rt_apol(int32_t a, int32_t r, int32_t *x, int32_t *y)
@@ -945,12 +946,17 @@ static int32_t rt_bpm_angle(uint32_t bpm)
 
 static void rt_draw_grv(void)
 {
-    uint32_t show = rt_sn.show >= ROTO_SHOW_GBPM && rt_sn.show <= ROTO_SHOW_GDUB ? rt_sn.show : 0u, i;
+    /* K1 SWING (orange ticks), K2 RANDOM (pink scatter), K3 PROB (cyan arcs: their dashes
+     * fill in with it), K4 EVOLVE (green ellipse); the needle is the tempo (SELECT) */
+    static const char *const NM[4] = {"SWING", "RANDOM", "PROB", "EVOLVE"};
+    uint32_t show = rt_sn.show >= ROTO_SHOW_G1 && rt_sn.show <= ROTO_SHOW_G4 ? rt_sn.show - ROTO_SHOW_G1 + 1u : 0u, i;
+    uint32_t val[4];
     int32_t x, y, x1, y1, a;
     char l[16], r[16];
+    val[0] = rt_sn.g_swing < 50u ? 0u : (rt_sn.g_swing - 50u) * 4u;
+    val[1] = rt_sn.g_rand; val[2] = rt_sn.g_prob; val[3] = rt_sn.g_evolve;
 
-    /* the frame: crosshair, the two diagonals and their end marks */
-    rt_rect(RT_A_X, RT_RULE_Y + 6, RT_A_X + 1, RT_H - 6, RT_AM);
+    rt_rect(RT_A_X, RT_RULE_Y + 6, RT_A_X + 1, RT_H - 6, RT_AM);   /* the frame */
     rt_hspan(6, RT_W - 6, RT_A_Y, RT_AM);
     for (a = 640; a <= 896; a += 256) {
         rt_apol(a, 112, &x, &y); rt_apol(a + 512, 44, &x1, &y1);
@@ -958,9 +964,7 @@ static void rt_draw_grv(void)
         rt_apol(a, 118, &x, &y); rt_apol(a, 134, &x1, &y1);
         rt_aline(x, y, x1, y1, RT_AM);
     }
-
-    /* the dome and its base; the tempo scale round it, a mark every 10, a number every 20 */
-    for (a = 512; a < 1024; a += 2) {
+    for (a = 512; a < 1024; a += 2) {                              /* the dome; the tempo scale round it */
         rt_apol(a, RT_A_R, &x, &y); rt_apol(a + 2, RT_A_R, &x1, &y1);
         rt_aline(x, y, x1, y1, RT_AY);
     }
@@ -970,7 +974,7 @@ static void rt_draw_grv(void)
     for (i = 60; i <= 180u; i += 10u) {
         a = rt_bpm_angle(i);
         rt_apol(a, RT_A_R + 2, &x, &y); rt_apol(a, RT_A_R + (i % 20u ? 5 : 8), &x1, &y1);
-        rt_aline(x, y, x1, y1, RT_GC[0][show == ROTO_SHOW_GBPM ? 0 : 1]);
+        rt_aline(x, y, x1, y1, RT_AM);
         if (i % 20u == 0u && i > 60u && i < 180u) {
             char t[4];
             rt_fmt_u(t, i);
@@ -978,40 +982,48 @@ static void rt_draw_grv(void)
             rt_text_s(x - RT_TEXT_S_W(t) / 2, y - 3, t, RT_AD);
         }
     }
-
-    /* SWING: a bar's sixteen 1/16s inside the dome, every second one pushed later */
-    {
+    {   /* SWING: a bar's sixteen 1/16s inside the dome, every second one pushed later */
         uint32_t sw = rt_sn.g_swing < 50u ? 50u : rt_sn.g_swing > 75u ? 75u : rt_sn.g_swing;
-        uint16_t c = RT_GC[1][show == ROTO_SHOW_GSWING ? 0 : 1];
         for (i = 0; i < 16u; i++) {
             int32_t pair = (int32_t)(i / 2u) * 64;
             a = 512 + 16 + ((pair + ((i & 1u) ? (int32_t)(64u * sw / 100u) : 0)) * (512 - 32)) / 512;
             rt_apol(a, RT_A_R - 3, &x, &y); rt_apol(a, RT_A_R - ((i & 3u) ? 7 : 11), &x1, &y1);
-            rt_aline(x, y, x1, y1, (i & 1u) ? c : RT_GC[1][2]);
+            rt_aline(x, y, x1, y1, (i & 1u) ? RT_GC[1][show == 1u ? 0 : 1] : RT_GC[1][2]);
         }
     }
-
-    /* EVOLVE: the dashed arcs, lit as far as it goes */
-    for (i = 0; i < 4u; i++) {
-        int lit = rt_sn.g_evolve > i * 25u;
-        rt_dash_arc(37 + (int32_t)i * 19, RT_GC[2][lit ? (show == ROTO_SHOW_GEVOLVE ? 0 : 1) : 2]);
+    for (i = 0; i < 4u; i++) {                                     /* PROB: the arcs' dashes fill in with it */
+        int32_t rr = 37 + (int32_t)i * 19, px = 0, py = 0, keep = rt_cy1;
+        uint16_t c = RT_GC[4][show == 3u ? 0 : 1];
+        if (rt_cy1 > RT_A_BASE) rt_cy1 = RT_A_BASE;
+        for (a = 512 - 48; a <= 1024 + 48; a += 3) {
+            rt_apol(a, rr, &x, &y);
+            if (a > 512 - 48 && ((uint32_t)(a + 600) % 28u) < 4u + (24u * val[2]) / 100u) rt_aline(px, py, x, y, c);
+            px = x; py = y;
+        }
+        rt_cy1 = keep;
     }
-
-    /* DUB: the ellipse, fatter the more is thrown into the echo */
-    {
-        int32_t b = 3 + (rt_sn.g_dub * 32) / 100, t, px = 0, py = 0, ca = rt_cos(-52), sa = rt_sin(-52);
-        uint16_t c = RT_GC[3][show == ROTO_SHOW_GDUB ? 0 : 1];
+    {   /* EVOLVE: the ellipse, fatter the more the pattern changes by itself */
+        int32_t b = 3 + ((int32_t)val[3] * 32) / 100, t, px = 0, py = 0, ca = rt_cos(-52), sa = rt_sin(-52);
         for (t = 0; t <= 1024; t += 8) {
             int32_t ex = rt_round14(rt_cos(t) * 80), ey = rt_round14(rt_sin(t) * b);
             x = 150 + rt_round14(ex * ca - ey * sa);
             y = 136 + rt_round14(ex * sa + ey * ca);
-            if (t) rt_aline(px, py, x, y, c);
+            if (t) rt_aline(px, py, x, y, RT_GC[2][show == 4u ? 0 : 1]);
             px = x; py = y;
         }
     }
-
-    /* the needle: the tempo */
-    {
+    {   /* RANDOM: a scatter inside the dome, more of it and wider the more random */
+        uint32_t n = (val[1] * 40u) / 100u, h = 0x9E3779B9u;
+        for (i = 0; i < n; i++) {
+            int32_t rr;
+            h ^= h << 13; h ^= h >> 17; h ^= h << 5;
+            a = 512 + 24 + (int32_t)(h % 464u);
+            rr = 30 + (int32_t)((h >> 9) % 62u);
+            rt_apol(a, rr, &x, &y);
+            rt_rect(x, y, x + 2, y + 2, RT_GC[3][show == 2u ? 0 : 1]);
+        }
+    }
+    {   /* the needle: the tempo (SELECT) */
         int32_t dx, dy, bx, by, px, py, x0, y0;
         a = rt_bpm_angle(rt_sn.bpm);
         rt_apol(a, RT_A_R - 14, &x, &y);
@@ -1026,43 +1038,29 @@ static void rt_draw_grv(void)
         rt_ring_at(x, y, 6, RT_AY);
         rt_rect(x - 2, y - 2, x + 3, y + 3, RT_AY);
     }
-    rt_ring_at(RT_A_X, RT_A_Y, 11, RT_AY);                  /* the pivot */
-
-    /* the bars: the dial's setting on the left, DUB in four on the right */
-    {
-        uint32_t f;
-        switch (show) {
-        case ROTO_SHOW_GBPM:    f = ((uint32_t)(rt_sn.bpm < 60u ? 60u : rt_sn.bpm > 180u ? 180u : rt_sn.bpm) - 60u) * 100u / 120u; break;
-        case ROTO_SHOW_GSWING:  f = ((uint32_t)(rt_sn.g_swing < 50u ? 50u : rt_sn.g_swing) - 50u) * 4u; break;
-        case ROTO_SHOW_GDUB:    f = rt_sn.g_dub; break;
-        default:                f = rt_sn.g_evolve; break;
+    rt_ring_at(RT_A_X, RT_A_Y, 11, RT_AY);
+    {   /* the bars: the four, each in its colour */
+        static const uint8_t GCI[4] = {1, 3, 4, 2};
+        for (i = 0; i < 4u; i++) {
+            int32_t bx = 16 + (int32_t)i * 54;
+            const uint16_t *gc = RT_GC[GCI[i]];
+            rt_rect(bx, 199, bx + 46, 200, gc[2]);
+            rt_rect(bx, 197, bx + (int32_t)((val[i] > 100u ? 100u : val[i]) * 46u / 100u), 202, gc[show == i + 1u ? 0 : 1]);
         }
-        if (f > 100u) f = 100u;
-        {
-            const uint16_t *gc = RT_GC[show ? show - ROTO_SHOW_GBPM : 2u];
-            rt_rect(16, 198, 16 + 80, 199, gc[2]);
-            rt_rect(16, 196, 16 + (int32_t)(f * 80u / 100u), 201, gc[show ? 0 : 1]);
-        }
-        for (i = 0; i < 4u; i++)
-            rt_rect(152 + (int32_t)i * 19, 196, 152 + (int32_t)i * 19 + 14, 201, RT_GC[3][rt_sn.g_dub > i * 25u ? (show == ROTO_SHOW_GDUB ? 0 : 1) : 2]);
-    }
-
-    /* the readout */
-    {
-        uint32_t k;
-        const char *name = show == ROTO_SHOW_GBPM ? "TEMPO" : show == ROTO_SHOW_GSWING ? "SWING" : show == ROTO_SHOW_GEVOLVE ? "EVOLVE" : show == ROTO_SHOW_GDUB ? "DUB" : 0;
-        if (name) {
-            for (k = 0; name[k]; k++) l[k] = name[k];
+        if (show) {
+            uint32_t k;
+            const uint16_t c = RT_GC[GCI[show - 1u]][0];
+            for (k = 0; NM[show - 1u][k]; k++) l[k] = NM[show - 1u][k];
             l[k] = 0;
-            if (show == ROTO_SHOW_GBPM) { rt_fmt_u(r, rt_sn.bpm); k = rt_strlen(r); r[k] = ' '; r[k+1] = 'B'; r[k+2] = 'P'; r[k+3] = 'M'; r[k+4] = 0; }
-            else { rt_fmt_u(r, show == ROTO_SHOW_GSWING ? rt_sn.g_swing : show == ROTO_SHOW_GEVOLVE ? rt_sn.g_evolve : rt_sn.g_dub); k = rt_strlen(r); r[k] = '%'; r[k+1] = 0; }
+            rt_fmt_u(r, show == 1u ? rt_sn.g_swing : val[show - 1u]); k = rt_strlen(r); r[k] = '%'; r[k + 1] = 0;
+            rt_text_b(16, 212, l, 1, c);
+            rt_text_b(224 - (int32_t)rt_strlen(r) * 8, 212, r, 1, c);
         } else {
-            rt_fmt_u(l, rt_sn.bpm); k = rt_strlen(l); l[k] = ' '; l[k+1] = 'B'; l[k+2] = 'P'; l[k+3] = 'M'; l[k+4] = 0;
-            r[0] = 'S'; r[1] = 'W'; r[2] = 'I'; r[3] = 'N'; r[4] = 'G'; r[5] = ' ';
-            rt_fmt_u(r + 6, rt_sn.g_swing); k = rt_strlen(r); r[k] = '%'; r[k+1] = 0;
+            uint32_t k;
+            rt_fmt_u(l, rt_sn.bpm); k = rt_strlen(l); l[k] = ' '; l[k + 1] = 'B'; l[k + 2] = 'P'; l[k + 3] = 'M'; l[k + 4] = 0;
+            rt_text_b(16, 212, l, 1, RT_AM);
+            rt_text_s(224 - RT_TEXT_S_W("SWG RND PRB EVO"), 216, "SWG RND PRB EVO", RT_AD);
         }
-        rt_text_b(16, 212, l, 1, show ? RT_GC[show - ROTO_SHOW_GBPM][0] : RT_GC[0][1]);
-        rt_text_b(224 - (int32_t)rt_strlen(r) * 8, 212, r, 1, show ? RT_GC[show - ROTO_SHOW_GBPM][0] : RT_GC[1][1]);
     }
 }
 
@@ -1694,7 +1692,7 @@ static uint32_t rt_ring_sig(void)
         for (j = 0; j < rt_sn.a_n; j++) h = rt_fnv(h, rt_sn.a_notes[j]);
     }
     if (rt_sn.view == ROTO_VIEW_GLO) { h = rt_fnv(h, (uint8_t)rt_sn.o_pitch); h = rt_fnv(h, (uint8_t)rt_sn.o_bright); h = rt_fnv(h, rt_sn.o_echo); h = rt_fnv(h, rt_sn.o_len); h = rt_fnv(h, rt_sn.o_drum); h = rt_fnv(h, rt_sn.o_level); }
-    if (rt_sn.view == ROTO_VIEW_GRV) { h = rt_fnv(h, rt_sn.bpm); h = rt_fnv(h, rt_sn.g_swing); h = rt_fnv(h, rt_sn.g_evolve); h = rt_fnv(h, rt_sn.g_dub); }
+    if (rt_sn.view == ROTO_VIEW_GRV) { h = rt_fnv(h, rt_sn.bpm); h = rt_fnv(h, rt_sn.g_swing); h = rt_fnv(h, rt_sn.g_evolve); h = rt_fnv(h, rt_sn.g_dub); h = rt_fnv(h, rt_sn.g_rand); h = rt_fnv(h, rt_sn.g_prob); }
     if (rt_sn.view == ROTO_VIEW_FLT) { uint32_t e, c; for (e = 0; e < 4u; e++) { h = rt_fnv(h, (uint8_t)rt_sn.flt[e]); for (c = 0; rt_sn.flt_lbl[e][c]; c++) h = rt_fnv(h, (uint8_t)rt_sn.flt_lbl[e][c]); } }
     for (s = 0; s < rt_sn.len; s++)
         h = rt_fnv(h, (uint32_t)(rt_sn.on[s] | (rt_sn.ghost[s] << 1) | (rt_sn.note[s] << 2)));

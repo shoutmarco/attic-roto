@@ -105,6 +105,8 @@ typedef struct {
     uint8_t  name_pos;   /* the letter K1 is on */
     char     name_buf[9];
     uint16_t gnum;       /* PRESETS: the groove number being dialled (shown while turning; 0: none) */
+    uint8_t  grand;      /* GROOVE RANDOM: 0..100, each hit a little softer or later at random (up to -40 % velocity, +15 ms) */
+    uint8_t  gprob;      /* GROOVE PROB: 0..100, the chance every hit plays (with each ring's own PROB) */
     uint8_t  dub;        /* GROOVE: 0..100, how often a sound is thrown into the echo (a bar or so) */
 } roto_seq_t;
 
@@ -113,7 +115,7 @@ typedef struct {
 #define ROTO_VIEW_ENV    2
 #define ROTO_VIEW_FLT    3
 #define ROTO_VIEW_DLY    4
-#define ROTO_VIEW_GRV    5   /* GROOVE: tempo, swing, evolve, dub (no button for now) */
+#define ROTO_VIEW_GRV    5   /* GROOVE (SCL): swing, random, prob, evolve; the needle the tempo */
 #define ROTO_VIEW_ARP    7   /* ARP: the selected ring's arp */
 #define ROTO_VIEW_GLO    8   /* GLO: the selected ring's sound, live: pitch, filter, echo, length */
 #define ROTO_ARP_UP     1
@@ -130,7 +132,7 @@ enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_
        ROTO_SHOW_BRIGHT, ROTO_SHOW_EDGE, ROTO_SHOW_FENV, ROTO_SHOW_DRIVE,
        ROTO_SHOW_DTIME, ROTO_SHOW_DFDBK, ROTO_SHOW_DSEND, ROTO_SHOW_DCOLOR,
        ROTO_SHOW_HOLD, ROTO_SHOW_NEW,
-       ROTO_SHOW_GBPM, ROTO_SHOW_GSWING, ROTO_SHOW_GEVOLVE, ROTO_SHOW_GDUB,
+       ROTO_SHOW_G1, ROTO_SHOW_G2, ROTO_SHOW_G3, ROTO_SHOW_G4,   /* GROOVE: K1..K4 */
        ROTO_SHOW_GNUM,   /* PRESETS: a groove number (roto.gnum), or a save's name (roto.gnum >= 10000: save gnum - 10000) */
        ROTO_SHOW_SAVED, ROTO_SHOW_NOTSAVED,
        ROTO_SHOW_A1, ROTO_SHOW_A2, ROTO_SHOW_A3, ROTO_SHOW_A4,   /* ARP: K1..K4 */

@@ -416,7 +416,7 @@ static void ui_leds(void)
         ready = 1;
     }
     (void)fam;                                          /* attic-roto: the lit button is the screen you're on */
-    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : roto.view == ROTO_VIEW_DLY ? B_FX : roto.view == ROTO_VIEW_ARP ? B_ARP : roto.view == ROTO_VIEW_GLO ? B_GLO : roto.view == ROTO_VIEW_SND ? B_LFO : B_HOME], 1);
+    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : roto.view == ROTO_VIEW_DLY ? B_FX : roto.view == ROTO_VIEW_ARP ? B_ARP : roto.view == ROTO_VIEW_GLO ? B_GLO : roto.view == ROTO_VIEW_GRV ? B_SCL : roto.view == ROTO_VIEW_SND ? B_LFO : B_HOME], 1);
     if ((k = arp_led()) != 2u && (!ui.layer || layer_btn() != B_ARP))
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3]))
@@ -1717,12 +1717,12 @@ static void ui_input(void)
             if ((v = panel_enc(EN_K4)) != 0) { k->gate = (uint8_t)clamp((int32_t)k->gate + v * 5, 5, 100); roto_ui_show(ROTO_SHOW_O4, fm1_ms); }
         }
     }
-    if (roto.view == ROTO_VIEW_GRV) {   /* GROOVE: K1 BPM, K2 SWING, K3 EVOLVE, K4 DUB (taken here: the ring knobs see nothing) */
+    if (roto.view == ROTO_VIEW_GRV) {   /* GROOVE: K1 SWING, K2 RANDOM, K3 PROB, K4 EVOLVE (taken here: the ring knobs see nothing) */
         int32_t v;
-        if ((v = panel_enc(EN_K1)) != 0) { roto.bpm = (uint8_t)clamp((int32_t)roto.bpm + v, 60, 180); song.g[G_BPM] = roto.bpm; roto_ui_show(ROTO_SHOW_GBPM, fm1_ms); }
-        if ((v = panel_enc(EN_K2)) != 0) { roto.swing = (uint8_t)clamp((int32_t)roto.swing + v, 50, 75); roto_ui_show(ROTO_SHOW_GSWING, fm1_ms); }
-        if ((v = panel_enc(EN_K3)) != 0) { roto.evolve = (uint8_t)clamp((int32_t)roto.evolve + v * 5, 0, 100); roto_ui_show(ROTO_SHOW_GEVOLVE, fm1_ms); }
-        if ((v = panel_enc(EN_K4)) != 0) { roto.dub = (uint8_t)clamp((int32_t)roto.dub + v * 5, 0, 100); roto_ui_show(ROTO_SHOW_GDUB, fm1_ms); }
+        if ((v = panel_enc(EN_K1)) != 0) { roto.swing = (uint8_t)clamp((int32_t)roto.swing + v, 50, 75); roto_ui_show(ROTO_SHOW_G1, fm1_ms); }
+        if ((v = panel_enc(EN_K2)) != 0) { roto.grand = (uint8_t)clamp((int32_t)roto.grand + v * 5, 0, 100); roto_ui_show(ROTO_SHOW_G2, fm1_ms); }
+        if ((v = panel_enc(EN_K3)) != 0) { roto.gprob = (uint8_t)clamp((int32_t)roto.gprob + v * 5, 0, 100); roto_ui_show(ROTO_SHOW_G3, fm1_ms); }
+        if ((v = panel_enc(EN_K4)) != 0) { roto.evolve = (uint8_t)clamp((int32_t)roto.evolve + v * 5, 0, 100); roto_ui_show(ROTO_SHOW_G4, fm1_ms); }
     }
     if (roto.view == ROTO_VIEW_DLY) {   /* DELAY: K1 TIME, K2 FEEDBACK, K3 the ring's SEND, K4 COLOUR.
          * roto.dtime / dfdbk / snd[].dly are what dub throws come back to, so they're set first. */
@@ -1923,6 +1923,10 @@ static void ui_input(void)
     }
     if (pressed & (1u << panel.btn[B_ARP])) {               /* ARP: the selected ring's arp (again: back to the ring) */
         roto.view = roto.view == ROTO_VIEW_ARP ? ROTO_VIEW_RING : ROTO_VIEW_ARP;
+        roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
+    }
+    if (pressed & (1u << panel.btn[B_SCL])) {               /* SCL: GROOVE (again: back to the ring) */
+        roto.view = roto.view == ROTO_VIEW_GRV ? ROTO_VIEW_RING : ROTO_VIEW_GRV;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
     if (pressed & (1u << panel.btn[B_GLO])) {               /* GLO: the selected ring's sound, live (again: back to the ring) */

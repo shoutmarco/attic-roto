@@ -48,6 +48,7 @@ void roto_seq_init(void)
         roto.trk[t].arp_len = 50;
     }
     roto.dub = 50;
+    roto.gprob = 100;
     roto.save_cur = 0xFF;
 }
 
@@ -430,20 +431,24 @@ static uint32_t ring_note(const roto_track_t *k, uint32_t note)   /* GLO PITCH (
 static void fire_now(uint32_t t, roto_track_t *k, uint32_t step_len, uint32_t pos)
 {
     const roto_step_t *st = &k->step[pos < ROTO_STEPS ? pos : 0u];
-    uint32_t i, g, note;
+    uint32_t i, g, note, vel;
     if (k->nheld) release(t, k);
     if (!st->on) return;
     if (k->prob < 100u && audio_dice(100u) >= k->prob) { if (k->arp) rarp_stop(k); return; }
+    if (roto.gprob < 100u && audio_dice(100u) >= roto.gprob) { if (k->arp) rarp_stop(k); return; }   /* (GROOVE PROB) */
     if (st->chance && audio_dice(100u) >= st->chance) { if (k->arp) rarp_stop(k); return; }
     note = ring_note(k, st->note);
-    if (k->arp) { rarp_start(k, note, st->vel); return; }
+    vel = st->vel ? st->vel : 100u;
+    if (roto.grand) vel -= (vel * audio_dice(1u + (roto.grand * 40u) / 100u)) / 100u;   /* (RANDOM: a little softer) */
+    if (vel < 1u) vel = 1u;
+    if (k->arp) { rarp_start(k, note, vel); return; }
     k->held[k->nheld++] = (uint8_t)note;
-    roto_note_on(k->part, (uint8_t)note, st->vel ? st->vel : 100u);
+    roto_note_on(k->part, (uint8_t)note, vel);
     for (i = 0; i < ROTO_CHORD; i++) {
         int32_t n = (int32_t)note + k->chord[i];
         if (!k->chord[i] || n < 0 || n > 127) continue;
         k->held[k->nheld++] = (uint8_t)n;
-        roto_note_on(k->part, (uint8_t)n, st->vel ? st->vel : 100u);
+        roto_note_on(k->part, (uint8_t)n, vel);
     }
     g = (step_len * (k->gate ? k->gate : 50u)) / 100u;
     k->gate_left = g ? g : 1u;
@@ -452,7 +457,8 @@ static void fire_now(uint32_t t, roto_track_t *k, uint32_t step_len, uint32_t po
 /* a step starts: now, or (a lazy ring) a few ms behind the beat */
 static void fire(uint32_t t, roto_track_t *k, uint32_t step_len)
 {
-    uint32_t d = k->lag ? (roto_sr * k->lag) / 1000u : 0u;
+    uint32_t ms = k->lag + (roto.grand ? audio_dice(1u + (roto.grand * 15u) / 100u) : 0u);   /* (RANDOM: a little late) */
+    uint32_t d = ms ? (roto_sr * ms) / 1000u : 0u;
     if (k->nheld) release(t, k);
     if (!d) { fire_now(t, k, step_len, k->pos); return; }
     k->lag_step = k->pos;
@@ -873,6 +879,7 @@ void roto_save_take(roto_save_t *s)
     s->gnum = (uint16_t)(roto.seed <= ROTO_GROOVES ? roto.seed : 0u);
     s->bpm = roto.bpm; s->swing = roto.swing; s->root = roto.root; s->mode = roto.mode;
     s->dtime = roto.dtime; s->dfdbk = roto.dfdbk; s->dcolor = roto.dcolor; s->evolve = roto.evolve; s->dub = roto.dub;
+    s->rsv[0] = roto.grand; s->rsv[1] = (uint8_t)(100u - roto.gprob);   /* (stored as the drop chance: an older save's 0 is 100 %) */
     for (t = 0; t < ROTO_TRACKS; t++) {
         const roto_track_t *k = &roto.trk[t];
         roto_save_ring_t *r = &s->ring[t];
@@ -894,6 +901,7 @@ void roto_save_give(const roto_save_t *s)
     roto.root = s->root % 12u; roto.mode = s->mode % 3u;
     roto.dtime = s->dtime; roto.dfdbk = s->dfdbk; roto.dcolor = s->dcolor;
     roto.evolve = s->evolve <= 100u ? s->evolve : 50u; roto.dub = s->dub <= 100u ? s->dub : 50u;
+    roto.grand = s->rsv[0] <= 100u ? s->rsv[0] : 0u; roto.gprob = (uint8_t)(s->rsv[1] <= 100u ? 100u - s->rsv[1] : 100u);
     for (t = 0; t < ROTO_TRACKS; t++) {
         roto_track_t *k = &roto.trk[t];
         const roto_save_ring_t *r = &s->ring[t];
