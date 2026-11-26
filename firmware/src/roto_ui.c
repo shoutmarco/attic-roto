@@ -1057,7 +1057,8 @@ static void rt_draw_grv(void)
 /* ------------------------------------------------------------- arp
  * After the compass reference: the twelve notes round the ring (C at the top,
  * clockwise), the notes of the hit being rolled in yellow, the others small and
- * white. The green needle points at the note playing now; the red spokes are the
+ * white, the hit's notes joined into a shape (three notes: a triangle), the note
+ * playing now its corner in green; the red spokes are the
  * RATE (more spokes, faster), the blue dashed rings in the middle the RANGE (one
  * per octave). Top left: the note playing, big; top right: MODE, RATE, LENGTH, the
  * one turning in green; along the bottom: notes, range, on / off. A faint
@@ -1085,42 +1086,14 @@ static void rt_cpol(int32_t a, int32_t r, int32_t *x, int32_t *y)
 
 static int32_t rt_pc_angle(uint32_t pc) { return 768 + (int32_t)((pc % 12u) * 1024u + 6u) / 12; }   /* C at the top, clockwise */
 
-/* filled triangle, a span per row */
-static void rt_ftri(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2, uint16_t c)
-{
-    int32_t t, y;
-    if (y1 < y0) { t = y0; y0 = y1; y1 = t; t = x0; x0 = x1; x1 = t; }
-    if (y2 < y0) { t = y0; y0 = y2; y2 = t; t = x0; x0 = x2; x2 = t; }
-    if (y2 < y1) { t = y1; y1 = y2; y2 = t; t = x1; x1 = x2; x2 = t; }
-    if (y2 == y0) return;
-    for (y = y0; y <= y2; y++) {
-        int32_t xa = x0 + ((x2 - x0) * (y - y0)) / (y2 - y0), xb;
-        if (y < y1) xb = x0 + ((x1 - x0) * (y - y0)) / (y1 - y0);
-        else if (y2 != y1) xb = x1 + ((x2 - x1) * (y - y1)) / (y2 - y1);
-        else xb = x1;
-        if (xa > xb) { t = xa; xa = xb; xb = t; }
-        rt_hspan(xa, xb + 1, y, c);
-    }
-}
-
-static void rt_cneedle(uint32_t pc, uint16_t c)
-{
-    int32_t a = rt_pc_angle(pc), tx, ty, lx, ly, rx, ry;
-    rt_cpol(a, RT_C_R - 6, &tx, &ty);
-    rt_cpol(a - 26, 30, &lx, &ly);
-    rt_cpol(a + 26, 30, &rx, &ry);
-    rt_ftri(tx, ty, lx, ly, rx, ry, c);
-    rt_cpol(a + 512, 10, &lx, &ly);                    /* (a short tail through the centre) */
-    rt_line(RT_C_X, RT_C_Y, lx, ly, c);
-}
-
-/* everything the needle and its note's name cover, for a repaint */
+/* a note's corner of the shape and its name, for a repaint when the note playing moves */
 static void rt_aneedle_box(uint32_t i, int32_t *x0, int32_t *y0, int32_t *x1, int32_t *y1)
 {
-    int32_t x, y;
+    int32_t x, y, cx, cy;
     rt_cpol(rt_pc_angle(rt_sn.a_notes[i]), RT_C_L, &x, &y);
-    *x0 = (x < RT_C_X ? x : RT_C_X) - 14; *x1 = (x > RT_C_X ? x : RT_C_X) + 15;
-    *y0 = (y < RT_C_Y ? y : RT_C_Y) - 14; *y1 = (y > RT_C_Y ? y : RT_C_Y) + 15;
+    rt_cpol(rt_pc_angle(rt_sn.a_notes[i]), RT_C_R - 4, &cx, &cy);
+    *x0 = (x < cx ? x : cx) - 14; *x1 = (x > cx ? x : cx) + 15;
+    *y0 = (y < cy ? y : cy) - 14; *y1 = (y > cy ? y : cy) + 15;
 }
 
 static void rt_cdash(int32_t r, uint16_t c)
@@ -1200,7 +1173,20 @@ static void rt_draw_arp(void)
         uint32_t o;
         for (o = 0; o < 3u; o++) rt_cdash(9 + (int32_t)o * 7, o < range ? (show == ROTO_SHOW_A3 ? RT_CB : on ? RT_CB : RT_CBD) : RT_CBD);
     }
-    if (cur != 0xFFu) rt_cneedle(cur, RT_CG);                       /* the needle */
+    if (chord) {                                                    /* the shape: the hit's notes joined round the ring */
+        int32_t fx = 0, fy = 0, px = 0, py = 0, first = 1;
+        for (i = 0; i < 12u; i++) if ((chord >> i) & 1u) {
+            rt_cpol(rt_pc_angle(i), RT_C_R - 4, &x, &y);
+            if (first) { fx = x; fy = y; first = 0; } else rt_line(px, py, x, y, RT_CYL);
+            px = x; py = y;
+        }
+        rt_line(px, py, fx, fy, RT_CYL);
+        for (i = 0; i < 12u; i++) if ((chord >> i) & 1u) {        /* its corners; the note playing now, big and green */
+            rt_cpol(rt_pc_angle(i), RT_C_R - 4, &x, &y);
+            if (cur != 0xFFu && cur % 12u == i) rt_rect(x - 4, y - 4, x + 5, y + 5, RT_CG);
+            else { rt_rect(x - 2, y - 2, x + 3, y + 3, RT_BG); rt_rect(x - 1, y - 1, x + 2, y + 2, RT_CYL); }
+        }
+    }
     rt_rect(RT_C_X - 1, RT_C_Y - 1, RT_C_X + 2, RT_C_Y + 2, RT_CW);
     {   /* the chevrons: the way the arp runs */
         uint32_t m = rt_sn.a_mode;
