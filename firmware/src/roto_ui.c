@@ -364,7 +364,8 @@ static void rt_draw_header(void)
 
     buf[0] = (char)('1' + rt_sn.sel); buf[1] = 0;
     x = rt_text_b(4, 4, buf, 1, col);
-    x = rt_text_b(x + 6, 4, roto.snd[rt_sn.part].name[0] ? roto.snd[rt_sn.part].name : "RING", 1, col);
+    x = rt_text_b(x + 6, 4, roto.snd[rt_sn.part].eng == ROTO_ENG_DRUM ? roto_piece_name(roto_piece_of(rt_sn.sel))   /* (a drum ring: its drum) */
+                          : roto.snd[rt_sn.part].name[0] ? roto.snd[rt_sn.part].name : "RING", 1, col);
     if (rt_sn.view == ROTO_VIEW_EUCLID) {               /* "EUCLID 3/5", as the reference */
         char e[16] = "EUCLID ";
         uint32_t n;
@@ -1655,6 +1656,7 @@ static uint32_t rt_head_sig(void)
     h = rt_fnv(h, rt_sn.div);
     h = rt_fnv(h, rt_sn.view);
     if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.hits); h = rt_fnv(h, rt_sn.len); }
+    if (roto.snd[rt_sn.part].eng == ROTO_ENG_DRUM) h = rt_fnv(h, roto_piece_of(rt_sn.sel) + 1u);
     h = rt_fnv(h, rt_sn.mute);
     if (rt_sn.view == ROTO_VIEW_ARP) h = rt_fnv(h, rt_sn.a_mode != 0u);
     if (rt_sn.view == ROTO_VIEW_SND) h = rt_fnv(h, rt_sn.spage);
