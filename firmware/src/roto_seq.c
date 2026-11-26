@@ -114,37 +114,37 @@ static uint32_t rt_strlen0(const char *p) { uint32_t n = 0; while (p[n]) n++; re
 typedef struct {
     const char *kick, *hat, *perc, *bass, *chord, *mel;
     uint8_t hat_note, perc_note, perc_len, mel_div;
-    uint8_t bpm, swing, bgate, cgate, blag, plag, rnd;
+    uint8_t bpm, swing, bgate, cgate, blag, plag, rnd, style;   /* style: 0 Weatherall (deep, dub), 1 Baby Ford, 2 Villalobos */
 } roto_groove_t;
 
 static const roto_groove_t GROOVES[] = {
     /* -- Weatherall -- */
-    /* drug chug */      {"X...X...X...X...", "..X...x...X...x.", "....X.......X..g", "..1..18...1..1.7", "...a............", "",
-                          46, 39, 16, 1, 108, 55, 45, 25, 14, 6, 8},
-    /* Sabres dub */     {"X...X...X...X.x.", ".gX..gXg.gX..gXg", "....X..g....X...", "1.....1...5.....1.....1...8...7.", "....a...........", "",
-                          42, 38, 16, 1, 112, 54, 70, 25, 12, 4, 8},
-    /* lazy stroll */    {"X...X...X...X...", "gxXggxXggxXggxXg", "......X.......X.", "..1..3.5.........5.3..1.....8...", "..a.............", "",
-                          70, 37, 16, 1, 106, 57, 55, 60, 16, 0, 10},
+    /* drug chug */      {"X...X...X...X...", "..X...x...X...x.", "....X.......X..g", "..1..18...1..1.7", "...a............", "......................5.........",
+                          46, 39, 16, 1, 105, 55, 45, 25, 14, 6, 8, 0},
+    /* Sabres dub */     {"X...X...X...X.x.", ".gX..gXg.gX..gXg", "....X..g....X...", "1.....1...5.....1.....1...8...7.", "....a...........", "..............................3.",
+                          42, 38, 16, 1, 108, 54, 70, 25, 12, 4, 8, 0},
+    /* lazy stroll */    {"X...X...X...X...", "gxXggxXggxXggxXg", "......X.......X.", "..1..3.5.........5.3..1.....8...", "..a.............", "........8.......................",
+                          70, 37, 16, 1, 103, 57, 55, 60, 16, 0, 10, 0},
     /* spacy disco */    {"X...X...X...X...", "..X...X...X...X.", "..x..x....x.", "..8..18...8..18.", "a.......b.......", "1.......5...........3...........",
-                          46, 56, 12, 1, 114, 55, 35, 90, 10, 0, 6},
+                          46, 56, 12, 1, 110, 55, 35, 90, 10, 0, 6, 0},
     /* -- Baby Ford -- */
     /* rolling */        {"X...X...X...X...", "..X.g.X.g.X.g.Xg", ".g..x..g.g..x..g", "1.11..1.1.11..8.", "..a.......a.....", "",
-                          42, 37, 16, 1, 122, 58, 40, 20, 6, 3, 8},
+                          42, 37, 16, 1, 122, 58, 40, 20, 6, 3, 8, 1},
     /* deep minimal */   {"X...X..xX...X...", "..X...x...X...x.", "....X.......X...", "..1...1.....5...", "a...............", "...........8.................5..",
-                          42, 39, 16, 1, 121, 56, 50, 90, 6, 8, 8},
+                          42, 39, 16, 1, 121, 56, 50, 90, 6, 8, 8, 1},
     /* bubbling */       {"X...X...X...X...", "gxXggxXggxXggxXg", "x..g..x.g...", "1.8.1.8.1.8.1.88", "......a.........", "",
-                          70, 63, 12, 1, 123, 57, 30, 25, 4, 0, 10},
+                          70, 63, 12, 1, 123, 57, 30, 25, 4, 0, 10, 1},
     /* marble */         {"X...X...X...X...", "..X...X...X...x.", "..g...........x...........g.", "..1.....1.1.....5..1.....8.1....", "...a........b...", "",
-                          46, 37, 28, 1, 120, 56, 45, 25, 6, 0, 8},
+                          46, 37, 28, 1, 120, 56, 45, 25, 6, 0, 8, 1},
     /* -- Villalobos -- */
     /* electro 8ths */   {"X...X...X...X...", "x.X.x.X.x.X.x.X.", "......x.....x..x......x....x....", "..1...1...1...1.", "", "1.......5.......3.......2.......",
-                          42, 45, 32, 2, 126, 54, 25, 25, 4, 5, 12},
+                          42, 45, 32, 2, 126, 54, 25, 25, 4, 5, 12, 2},
     /* tambours */       {"X...X...X...X...", "ggXgggXgggXgggXg", "x..g.x.", "..1.....1..1....", "a...............", "",
-                          70, 63, 7, 1, 124, 56, 45, 90, 4, 0, 15},
+                          70, 63, 7, 1, 124, 56, 45, 90, 4, 0, 15, 2},
     /* easy */           {"X...X...X...X...", "..X...X...X...X.", "x...g..x...", "..1..5.....3.1....1..5.....7.8..", "", "5.......3.......1.......2.......",
-                          42, 75, 11, 2, 124, 55, 45, 25, 4, 3, 12},
+                          42, 75, 11, 2, 124, 55, 45, 25, 4, 3, 12, 2},
     /* ostinato */       {"X...X...X...X...", "..x...x...x...x.", "x..g...x....g..x....", "1..1..1...1..1..", "..........a.....", "8.6.5...8.6.5...8.6.5.3.........",
-                          46, 37, 20, 1, 127, 56, 35, 25, 4, 2, 12},
+                          46, 37, 20, 1, 127, 56, 35, 25, 4, 2, 12, 2},
 };
 #define NGROOVE ((uint32_t)(sizeof GROOVES / sizeof GROOVES[0]))
 
@@ -185,7 +185,8 @@ void roto_seq_generate(uint32_t seed)
     sc = MODE_SC[roto.mode];
     roto.bpm = (uint8_t)(g->bpm - 1u + rnd(3u));
     roto.dtime = chance(75) ? 10u : 12u;                         /* params.c N_DTIME: 1/8D (the dotted-eighth echo), now and then 1/4D */
-    roto.dfdbk = (uint8_t)(55u + rnd(14u));
+    roto.dfdbk = (uint8_t)(g->style == 0u ? 64u + rnd(10u) : 55u + rnd(14u));   /* (Weatherall: a longer dub tail) */
+    if (g->style == 0u) roto.dub = 70;                           /* (and more throws into it) */
     roto.swing = (uint8_t)(g->swing + rnd(2u));
     roto.grand = g->rnd;                                         /* (a little looseness: "organic, human") */
     roto.evolve = 40;
@@ -194,7 +195,8 @@ void roto_seq_generate(uint32_t seed)
     k = &roto.trk[0];
     k->len = 16; k->div = 1; k->gate = 25; k->fill_note = 36;
     groove_ring(k, g->kick, 36, 16, 100);
-    sound(&roto.snd[0], SND_DRUMS[0], 0, 18, 0, 0);             /* DRUM KIT (it has every piece the grooves use) */
+    if (g->style == 0u) { sound(&roto.snd[0], SND_DRUMS[1], 0, 28, 0, 0); roto.snd[0].kit = 6; }   /* Weatherall: DEEP KIT, a rounder kick, more room */
+    else sound(&roto.snd[0], SND_DRUMS[0], 0, 18, 0, 0);        /* DRUM KIT (it has every piece the grooves use) */
 
     /* 2: the bass (one or two bars); maybe one note an octave over, maybe one a 1/16 later (never onto a beat) */
     k = &roto.trk[1];
@@ -202,6 +204,7 @@ void roto_seq_generate(uint32_t seed)
     k->len = (uint8_t)(blen > 16u ? 32u : 16u); k->div = 1; k->gate = g->bgate; k->lag = g->blag;
     base = 36u + pc;
     if (pc >= 7u) base -= 12u;
+    if (g->style == 0u && pc >= 4u && base >= 36u) base -= 12u;   /* (Weatherall: deeper, E1 .. D#2) */
     k->fill_note = (uint8_t)base;
     for (s = 0; s < blen && s < ROTO_STEPS; s++) {
         char c = g->bass[s];
@@ -230,7 +233,7 @@ void roto_seq_generate(uint32_t seed)
                 break;
             }
     }
-    sound(&roto.snd[1], SND_BASS[rnd(NSND(SND_BASS))], 0, 0, 0, 0);
+    sound(&roto.snd[1], SND_BASS[g->style == 0u ? 0u : rnd(NSND(SND_BASS))], 0, 0, 0, 0);   /* (Weatherall: the round SUB) */
 
     /* 3: the chord, a two-bar loop into the echo; it opens and closes slowly */
     k = &roto.trk[2];
@@ -243,7 +246,7 @@ void roto_seq_generate(uint32_t seed)
             if (g->chord[s] == 'a' || g->chord[s] == 'b')
                 put(k, s, 48u + pc + (g->chord[s] == 'a' ? home : STAB_ROOT[roto.mode][2]), 64u + rnd(16u));
     }
-    sound(&roto.snd[2], SND_STAB[rnd(NSND(SND_STAB))], 82, 52, 20, -22);
+    sound(&roto.snd[2], SND_STAB[rnd(NSND(SND_STAB))], g->style == 0u ? 104u : 82u, g->style == 0u ? 62u : 52u, 20, -22);   /* (Weatherall: deeper into the echo) */
     roto.snd[2].drift = (int8_t)(44 + (int32_t)rnd(12u));
 
     /* 4: the melody, a few notes into the echo */
@@ -256,7 +259,7 @@ void roto_seq_generate(uint32_t seed)
         if (c < '1' || c > '8') continue;
         put(k, s, 60u + pc + (c == '8' ? 12u : sc[c - '1']), 78u + rnd(20u));
     }
-    sound(&roto.snd[3], SND_BLIP[rnd(NSND(SND_BLIP))], 92, 50, 0, 26);
+    sound(&roto.snd[3], SND_BLIP[rnd(NSND(SND_BLIP))], g->style == 0u ? 110u : 92u, 50, 0, 26);   /* (a note fired into the echo) */
 
     /* 5: one hat (loud on the off-beats, ghosts between) */
     k = &roto.trk[4];
