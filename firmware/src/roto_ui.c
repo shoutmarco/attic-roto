@@ -1227,7 +1227,7 @@ static void rt_draw_arp(void)
 #define RT_G_Y0  36
 #define RT_G_W   176
 #define RT_G_H   160
-#define RT_GG    RT_RGB(18, 58, 26)
+#define RT_GG    RT_RGB(88, 92, 88)
 #define RT_GT    RT_RGB(96, 236, 116)
 #define RT_GM    RT_RGB(64, 168, 84)
 #define RT_GRED  RT_RGB(216, 56, 44)
