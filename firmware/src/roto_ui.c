@@ -272,7 +272,7 @@ static struct {
     uint8_t a_mode, a_rate, a_range, a_len, a_n, a_idx;
     uint8_t a_notes[16];
     int8_t o_pitch, o_bright;
-    uint8_t o_echo, o_len, o_drum;
+    uint8_t o_echo, o_len, o_drum, o_level;
     char name[9];
     uint8_t spage, s_drum, s_cat, s_idx, s_kit, s_piece, s_level;
     int8_t s_pan;
@@ -315,6 +315,7 @@ static void rt_snapshot(void)
         rt_sn.o_bright = roto.flt[rt_sn.part][0] == -128 ? (int8_t)-1 : roto.flt[rt_sn.part][0];
         rt_sn.o_echo = (uint8_t)((roto.snd[rt_sn.part].dly * 100u + 63u) / 127u);
         rt_sn.o_len = k->gate;
+        rt_sn.o_level = roto.snd[rt_sn.part].level <= 127u ? roto.snd[rt_sn.part].level : 127u;
     }
     rt_sn.naming = roto.naming; rt_sn.name_pos = roto.name_pos < 8u ? roto.name_pos : 0u;
     rt_sn.save_cur = roto.save_cur;
@@ -1216,63 +1217,108 @@ static void rt_draw_arp(void)
 }
 
 /* ------------------------------------------------------------- glo
- * The selected ring's sound as one ring, in the ring's colour: PITCH a scale over the
- * top with a needle; FILTER the ring's edge, smooth when dark, jagged when bright;
- * ECHO rings trailing outward; LENGTH an arc inside, further round the longer. */
-#define RT_O_R 56
+ * After the spectrum analyser reference: a dim green grid, the selected ring's sound
+ * as a green trace across it (low frequencies left, high right; drawn from its
+ * settings, not measured), the level as a red line, a marker on the main peak, the
+ * readout along the top and the four dials as soft keys down the right.
+ *   PITCH  slides the peak (the marker) left / right    FILTER where the trace rolls off
+ *   ECHO   the comb a delay makes, deeper with more     LENGTH how wide and full the peak is */
+#define RT_G_X0  6             /* the grid */
+#define RT_G_Y0  36
+#define RT_G_W   176
+#define RT_G_H   160
+#define RT_GG    RT_RGB(18, 58, 26)
+#define RT_GT    RT_RGB(96, 236, 116)
+#define RT_GM    RT_RGB(64, 168, 84)
+#define RT_GRED  RT_RGB(216, 56, 44)
+
+static uint32_t rt_noise(uint32_t x) { x = (x * 2654435761u) ^ (x >> 7); x ^= x << 9; return (x >> 11) % 5u; }
+
+/* the trace's height (0 floor .. 1024 top) at column u of RT_G_W */
+static int32_t rt_glo_level(int32_t u, int32_t pk, int32_t fc, int32_t width, int32_t echo)
+{
+    int32_t d = u - pk, lv, h;
+    lv = (820 * width * width) / (width * width + d * d);                 /* the peak */
+    h = u <= pk ? 0 : u < fc ? 520 - (u - pk) * 2 : 520 - (fc - pk) * 2 - (u - fc) * 14;   /* the harmonics, then the roll-off */
+    if (h < 0) h = 0;
+    if (h > lv) lv = h;
+    if (echo) {                                                            /* the delay's comb */
+        int32_t s = rt_sin(u * 64) >> 4;                                    /* -1024 .. 1024 */
+        lv -= (lv * echo * (s < 0 ? -s : s)) / (100 * 1024 * 2);
+    }
+    return lv < 0 ? 0 : lv;
+}
+
 static void rt_draw_glo(void)
 {
-    uint16_t col = RT_TRK_COL[rt_sn.sel], half = RT_TRK_HALF[rt_sn.sel];
+    static const char *const KEY[4] = {"PITCH", "FILTER", "ECHO", "LENGTH"};
     uint32_t show = rt_sn.show >= ROTO_SHOW_O1 && rt_sn.show <= ROTO_SHOW_O4 ? rt_sn.show - ROTO_SHOW_O1 + 1u : 0u;
-    int32_t a, x, y, x1, y1, px = 0, py = 0, i;
     int32_t bright = rt_sn.o_bright < 0 ? 50 : rt_sn.o_bright, echo = rt_sn.o_echo, len = rt_sn.o_len;
-    for (i = 1; i <= echo / 20; i++) rt_circle(RT_CX, RT_CY, RT_O_R + i * 6, i == 1 ? half : RT_TRK_RING[rt_sn.sel]);   /* ECHO */
-    if (show == 3u) for (i = 1; i <= echo / 20; i++) rt_circle(RT_CX, RT_CY, RT_O_R + i * 6, half);
-    {                                                              /* FILTER: the edge */
-        int32_t amp = (bright * 6) / 100, teeth = 6 + (bright * 18) / 100;
-        for (a = 0; a <= 1024; a += 4) {
-            int32_t r = RT_O_R + (bright > 5 ? (((a * teeth) / 1024) & 1 ? amp : -amp) : 0);
-            rt_polar(a, r, &x, &y);
-            if (a) rt_line(px, py, x, y, show == 2u ? RT_TEXT : col);
-            px = x; py = y;
+    int32_t pv = rt_sn.o_drum ? (rt_sn.o_pitch * 24) / 100 - 12 : rt_sn.o_pitch;
+    int32_t pk = 34 + pv * 2, fc = pk + 20 + (bright * (RT_G_W - pk - 24)) / 100, width = 3 + (len * 10) / 100;
+    int32_t i, x, y, py = 0;
+    char v[4][8];
+
+    for (i = 0; i <= 10; i++) rt_rect(RT_G_X0 + (i * RT_G_W) / 10, RT_G_Y0, RT_G_X0 + (i * RT_G_W) / 10 + 1, RT_G_Y0 + RT_G_H + 1, RT_GG);
+    for (i = 0; i <= 8; i++) rt_hspan(RT_G_X0, RT_G_X0 + RT_G_W + 1, RT_G_Y0 + (i * RT_G_H) / 8, RT_GG);
+
+    y = RT_G_Y0 + ((127 - (int32_t)rt_sn.o_level) * RT_G_H) / 127;         /* the level: the red line */
+    rt_hspan(RT_G_X0, RT_G_X0 + RT_G_W + 1, y, RT_GRED);
+
+    for (x = 0; x <= RT_G_W; x++) {                                        /* the trace */
+        int32_t lv = rt_glo_level(x, pk, fc, width, echo);
+        y = RT_G_Y0 + RT_G_H - 4 - (lv * (RT_G_H - 12)) / 1024 - (int32_t)rt_noise((uint32_t)x);
+        if (x) rt_line(RT_G_X0 + x - 1, py, RT_G_X0 + x, y, RT_GT);
+        py = y;
+    }
+    {                                                                      /* the marker on the peak */
+        int32_t lv = rt_glo_level(pk, pk, fc, width, echo), mx = RT_G_X0 + pk;
+        y = RT_G_Y0 + RT_G_H - 4 - (lv * (RT_G_H - 12)) / 1024 - 6;
+        for (i = 0; i < 5; i++) rt_hspan(mx - i, mx + i + 1, y - 5 + i, show == 1u ? RT_TEXT : RT_GT);
+        rt_text_s(mx + 6, y - 9, "1", RT_GM);
+    }
+
+    /* the soft keys: the four dials and their values */
+    if (rt_sn.o_drum) { rt_fmt_u(v[0], (uint32_t)rt_sn.o_pitch); i = (int32_t)rt_strlen(v[0]); v[0][i] = '%'; v[0][i + 1] = 0; }
+    else { int32_t p = rt_sn.o_pitch; i = 0; if (p > 0) v[0][i++] = '+'; if (p < 0) { v[0][i++] = '-'; p = -p; } rt_fmt_u(v[0] + i, (uint32_t)p); }
+    rt_fmt_u(v[1], (uint32_t)bright); i = (int32_t)rt_strlen(v[1]); v[1][i] = '%'; v[1][i + 1] = 0;
+    rt_fmt_u(v[2], (uint32_t)echo);   i = (int32_t)rt_strlen(v[2]); v[2][i] = '%'; v[2][i + 1] = 0;
+    rt_fmt_u(v[3], (uint32_t)len);    i = (int32_t)rt_strlen(v[3]); v[3][i] = '%'; v[3][i + 1] = 0;
+    for (i = 0; i < 4; i++) {
+        int32_t bx = 188, by = RT_G_Y0 + i * 40, hot = show == (uint32_t)i + 1u;
+        const char *k = i == 0 && rt_sn.o_drum ? "TUNE" : KEY[i];
+        if (hot) rt_rect(bx, by, bx + 48, by + 34, RT_GT);
+        else {
+            rt_hspan(bx, bx + 48, by, RT_GM); rt_hspan(bx, bx + 48, by + 33, RT_GM);
+            rt_rect(bx, by, bx + 1, by + 34, RT_GM); rt_rect(bx + 47, by, bx + 48, by + 34, RT_GM);
         }
+        rt_text_s(bx + 24 - RT_TEXT_S_W(k) / 2, by + 7, k, hot ? RT_BG : RT_GM);
+        rt_text_s(bx + 24 - RT_TEXT_S_W(v[i]) / 2, by + 20, v[i], hot ? RT_BG : RT_GT);
     }
-    {                                                              /* LENGTH: the arc inside */
-        int32_t end = (len * 940) / 100;
-        for (a = 0; a <= end; a += 3) {
-            rt_polar(-256 + a, RT_O_R - 12, &x, &y);
-            rt_rect(x - 1, y - 1, x + 1, y + 1, show == 4u ? RT_TEXT : half);
-        }
-    }
-    for (i = -12; i <= 12; i++) {                                  /* PITCH: the scale over the top, the needle */
-        a = -256 + i * 14;
-        rt_polar(a, RT_O_R + 34, &x, &y); rt_polar(a, RT_O_R + (i % 12 ? 30 : 27), &x1, &y1);
-        rt_line(x, y, x1, y1, i ? RT_LINE : RT_GREY);
-    }
-    {
-        int32_t pv = rt_sn.o_drum ? (rt_sn.o_pitch * 24) / 100 - 12 : rt_sn.o_pitch, tx, ty;
-        a = -256 + pv * 14;
-        rt_polar(a, RT_O_R + 25, &tx, &ty);
-        rt_polar(a - 6, RT_O_R + 36, &x, &y); rt_polar(a + 6, RT_O_R + 36, &x1, &y1);
-        rt_line(tx, ty, x, y, show == 1u ? RT_TEXT : col); rt_line(tx, ty, x1, y1, show == 1u ? RT_TEXT : col); rt_line(x, y, x1, y1, show == 1u ? RT_TEXT : col);
-    }
-    {                                                              /* the middle; the bottom */
-        char big[12], small[12];
-        const char *nm = show == 1u ? (rt_sn.o_drum ? "TUNE" : "PITCH") : show == 2u ? "FILTER" : show == 3u ? "ECHO" : show == 4u ? "LENGTH" : 0;
-        uint32_t k;
-        if (nm) {
-            if (show == 1u && !rt_sn.o_drum) { int32_t p = rt_sn.o_pitch; k = 0; if (p > 0) big[k++] = '+'; if (p < 0) { big[k++] = '-'; p = -p; } rt_fmt_u(big + k, (uint32_t)p); }
-            else { rt_fmt_u(big, (uint32_t)(show == 1u ? rt_sn.o_pitch : show == 2u ? bright : show == 3u ? echo : len)); k = rt_strlen(big); big[k] = '%'; big[k + 1] = 0; }
-            for (k = 0; nm[k]; k++) small[k] = nm[k];
-            small[k] = 0;
-            rt_text_b(RT_CX - (int32_t)rt_strlen(big) * 8, RT_CY - 18, big, 2, RT_TEXT);
-            rt_text_s(RT_CX - RT_TEXT_S_W(small) / 2, RT_CY + 10, small, col);
+
+    {   /* the readout along the top; the span along the bottom */
+        char top[32];
+        uint32_t k = 0, c;
+        const char *a = "MARKER 1  ";
+        for (c = 0; a[c]; c++) top[k++] = a[c];
+        if (show) {
+            const char *n = show == 1u && rt_sn.o_drum ? "TUNE" : KEY[show - 1u];
+            for (c = 0; n[c]; c++) top[k++] = n[c];
+            top[k++] = ' ';
+            for (c = 0; v[show - 1u][c]; c++) top[k++] = v[show - 1u][c];
         } else {
-            const char *n = roto.snd[rt_sn.part].name;
-            rt_text_s(RT_CX - RT_TEXT_S_W(n) / 2, RT_CY - 3, n, RT_GREY);
+            const char *n = "REF LVL ";
+            uint32_t lv = (rt_sn.o_level * 100u + 63u) / 127u;
+            for (c = 0; n[c]; c++) top[k++] = n[c];
+            top[k] = 0;
+            rt_fmt_u(top + k, lv);
+            k = rt_strlen(top);
+            top[k++] = '%';
         }
-        rt_text_s(RT_CX - RT_TEXT_S_W(rt_sn.o_drum ? "K1 TUNE  K2 FILTER  K3 ECHO  K4 LENGTH" : "K1 PITCH  K2 FILTER  K3 ECHO  K4 LENGTH") / 2, RT_H - 13,
-                  rt_sn.o_drum ? "K1 TUNE  K2 FILTER  K3 ECHO  K4 LENGTH" : "K1 PITCH  K2 FILTER  K3 ECHO  K4 LENGTH", RT_GREY);
+        top[k] = 0;
+        rt_text_s(RT_G_X0, 25, top, show ? RT_GT : RT_GM);
+        rt_text_s(RT_G_X0, RT_H - 12, "START 20 HZ", RT_GM);
+        rt_text_s(RT_G_X0 + RT_G_W - RT_TEXT_S_W("STOP 20 KHZ"), RT_H - 12, "STOP 20 KHZ", RT_GM);
     }
 }
 
@@ -1647,7 +1693,7 @@ static uint32_t rt_ring_sig(void)
         h = rt_fnv(h, rt_sn.a_mode); h = rt_fnv(h, rt_sn.a_rate); h = rt_fnv(h, rt_sn.a_range); h = rt_fnv(h, rt_sn.a_len); h = rt_fnv(h, rt_sn.a_n);
         for (j = 0; j < rt_sn.a_n; j++) h = rt_fnv(h, rt_sn.a_notes[j]);
     }
-    if (rt_sn.view == ROTO_VIEW_GLO) { h = rt_fnv(h, (uint8_t)rt_sn.o_pitch); h = rt_fnv(h, (uint8_t)rt_sn.o_bright); h = rt_fnv(h, rt_sn.o_echo); h = rt_fnv(h, rt_sn.o_len); h = rt_fnv(h, rt_sn.o_drum); }
+    if (rt_sn.view == ROTO_VIEW_GLO) { h = rt_fnv(h, (uint8_t)rt_sn.o_pitch); h = rt_fnv(h, (uint8_t)rt_sn.o_bright); h = rt_fnv(h, rt_sn.o_echo); h = rt_fnv(h, rt_sn.o_len); h = rt_fnv(h, rt_sn.o_drum); h = rt_fnv(h, rt_sn.o_level); }
     if (rt_sn.view == ROTO_VIEW_GRV) { h = rt_fnv(h, rt_sn.bpm); h = rt_fnv(h, rt_sn.g_swing); h = rt_fnv(h, rt_sn.g_evolve); h = rt_fnv(h, rt_sn.g_dub); }
     if (rt_sn.view == ROTO_VIEW_FLT) { uint32_t e, c; for (e = 0; e < 4u; e++) { h = rt_fnv(h, (uint8_t)rt_sn.flt[e]); for (c = 0; rt_sn.flt_lbl[e][c]; c++) h = rt_fnv(h, (uint8_t)rt_sn.flt_lbl[e][c]); } }
     for (s = 0; s < rt_sn.len; s++)
