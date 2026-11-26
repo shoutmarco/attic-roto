@@ -43,6 +43,12 @@ void roto_seq_init(void)
         roto.trk[t].gate = 50;
         roto.trk[t].prob = 100;
     }
+    roto.arp_speed = 1;                 /* ARP: off; 1/16, two octaves, short */
+    roto.arp_range = 2;
+    roto.arp_gate = 40;
+    roto.arp_part = 3;
+    roto.arp_cur = 0xFF;
+    roto.arp_note = 0xFF;
 }
 
 /* ------------------------------------------------------------- generator */
@@ -488,6 +494,49 @@ static void throw_tick(void)
     }
 }
 
+/* -------- ARP: on the 1/32 grid (so it swings with the rings) */
+static void rarp_off(void)
+{
+    if (roto.arp_note != 0xFFu) roto_note_off(roto.arp_npart, roto.arp_note);
+    roto.arp_note = 0xFF;
+    roto.arp_gate_left = 0;
+}
+
+static void rarp_32(uint32_t six)
+{
+    static const uint8_t SP[4] = {1, 2, 4, 8};          /* 1/32s per note */
+    uint32_t sp = SP[roto.arp_speed & 3u], n = roto.arp_len, i;
+    if ((roto.arp_n32++ % sp) != 0u) return;
+    rarp_off();
+    if (!roto.arp_chord || !n) { roto.arp_cur = 0xFF; return; }
+    i = roto.arp_cur;
+    if (i >= n) {                                        /* the first note */
+        i = roto.arp_mode == ROTO_ARP_DOWN ? n - 1u : 0u;
+        roto.arp_dir = 0; roto.arp_k = 0;
+    } else switch (roto.arp_mode) {
+    case ROTO_ARP_DOWN:   i = i ? i - 1u : n - 1u; break;
+    case ROTO_ARP_UPDOWN:
+        if (n < 2u) { i = 0; break; }
+        if (!roto.arp_dir) { if (i + 1u >= n) { roto.arp_dir = 1; i = n - 2u; } else i++; }
+        else               { if (!i) { roto.arp_dir = 0; i = 1; } else i--; }
+        break;
+    case ROTO_ARP_RANDOM: { uint32_t j = audio_dice(n); i = (j == i && n > 1u) ? (j + 1u) % n : j; } break;
+    case ROTO_ARP_PEDAL:
+        if (i || n < 2u) i = 0;
+        else { roto.arp_k = (uint8_t)(roto.arp_k % (n - 1u) + 1u); i = roto.arp_k; }
+        break;
+    default:              i = (i + 1u) % n; break;
+    }
+    roto.arp_cur = (uint8_t)i;
+    roto.arp_note = roto.arp_seq[i];
+    roto.arp_npart = roto.arp_part;
+    roto_note_on(roto.arp_part, roto.arp_note, (roto.arp_n32 - 1u) % 32u < sp ? 100u : 82u);   /* (the bar's first a little louder) */
+    {
+        uint32_t g = (six * sp / 2u * (roto.arp_gate ? roto.arp_gate : 40u)) / 100u;
+        roto.arp_gate_left = g ? g : 1u;
+    }
+}
+
 /* every ring on one 1/16 clock: a ring moves on every `div` 1/16s. Swing makes the
  * on-beat 1/16s longer and the off-beat ones shorter by the same amount. */
 static void sixteenth(uint32_t six)
@@ -511,6 +560,7 @@ static void sixteenth(uint32_t six)
         }
         fire(t, k, six * div);
     }
+    rarp_32(six);
 }
 
 void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
@@ -521,6 +571,7 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
         for (t = 0; t < ROTO_TRACKS; t++)
             if (roto.trk[t].nheld) release(t, &roto.trk[t]);
         if (roto.throw_trk < ROTO_PARTS) { roto.throw_left = 1; throw_tick(); }
+        rarp_off();
         return;
     }
     six = (sample_rate * 15u) / (roto.bpm ? roto.bpm : 120u);
@@ -529,6 +580,8 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
     if (roto.trk[0].pos == ROTO_POS_START) {                 /* PLAY: everything from the top, now */
         roto.n16 = 0;
         roto.acc16 = 0;
+        roto.arp_n32 = 0;
+        roto.arp_cur = 0xFF;
         sixteenth(six);
         len16 = (2u * six * sw) / 100u;
     }
@@ -538,7 +591,9 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
             roto_track_t *k = &roto.trk[t];
             if (k->gate_left && --k->gate_left == 0u) release(t, k);
         }
-        if (++roto.acc16 >= len16) {
+        if (roto.arp_gate_left && --roto.arp_gate_left == 0u) rarp_off();
+        if (++roto.acc16 == len16 / 2u) rarp_32(six);        /* (the off 1/32) */
+        if (roto.acc16 >= len16) {
             roto.acc16 = 0;
             roto.n16++;
             len16 = (roto.n16 & 1u) ? (2u * six * (100u - sw)) / 100u : (2u * six * sw) / 100u;
@@ -744,6 +799,50 @@ uint32_t roto_dtime_step(uint32_t t, int32_t dir)
     if (at < 0) at = 0;
     if (at > 12) at = 12;
     return DT_ORDER[at];
+}
+
+/* ------------------------------------------------------------- ARP (UI side) */
+static const uint8_t RARP_DEG[7] = {0, 3, 4, 5, 2, 6, 1};   /* i, iv, v, VI, III, VII, ii */
+
+static uint32_t rarp_tone(uint32_t deg)                   /* semitones above the key's root */
+{
+    return MODE_SC[roto.mode < 3u ? roto.mode : 0u][deg % 7u] + 12u * (deg / 7u);
+}
+
+void roto_arp_build(void)
+{
+    uint8_t s[16];
+    uint32_t n = 0, o, j, d, base, r = roto.arp_range < 1u ? 1u : roto.arp_range > 4u ? 4u : roto.arp_range;
+    if (roto.arp_chord) {
+        d = RARP_DEG[(roto.arp_chord - 1u) % 7u];
+        base = (roto.arp_part <= 1u ? 36u : 48u) + roto.root % 12u;
+        if (r > 2u && base >= 48u) base -= 12u;          /* (wide ranges start lower) */
+        for (o = 0; o < r; o++)
+            for (j = 0; j < 4u; j++) {
+                uint32_t note = base + rarp_tone(d + 2u * j) + 12u * o;
+                s[n++] = (uint8_t)(note > 120u ? 120u : note);
+            }
+    }
+    roto.arp_len = 0;                                    /* (the audio side never sees half a list) */
+    for (j = 0; j < n; j++) roto.arp_seq[j] = s[j];
+    roto.arp_len = (uint8_t)n;
+}
+
+void roto_arp_name(char *out)
+{
+    static const char *const PC[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    uint32_t d, r, t3, t7, i = 0;
+    const char *q, *p;
+    if (!roto.arp_chord) { out[0] = 'O'; out[1] = 'F'; out[2] = 'F'; out[3] = 0; return; }
+    d = RARP_DEG[(roto.arp_chord - 1u) % 7u];
+    r = rarp_tone(d);
+    t3 = rarp_tone(d + 2u) - r;
+    t7 = rarp_tone(d + 6u) - r;
+    q = t3 == 4u ? (t7 == 11u ? "MAJ7" : "DOM7") : (rarp_tone(d + 4u) - r == 6u ? "HDIM" : "MIN7");
+    for (p = PC[(roto.root + r) % 12u]; *p; p++) out[i++] = *p;
+    out[i++] = ' ';
+    for (p = q; *p; p++) out[i++] = *p;
+    out[i] = 0;
 }
 
 /* ------------------------------------------------------------- transport */

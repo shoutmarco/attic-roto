@@ -77,20 +77,47 @@ typedef struct {
     uint8_t  env[ROTO_PARTS][4];   /* each envelope, A D S R 0..127 (a copy of the track's P_ATK..P_REL, for the screen) */
     int8_t   flt[ROTO_PARTS][4];   /* FILTER, for the screen, K1..K4: bright, edge 0..100, env -100..100, drive 0..100 (-128: the sound has none) */
     char     flt_lbl[ROTO_PARTS][4][6];   /* the sound's own names for them ("CUT", "RES", ...) */
+    /* ARP: a chord from the pattern's key, played one note at a time on a ring's sound.
+     * UI side sets these (then roto_arp_build); it keeps playing when you leave the screen. */
+    uint8_t  arp_chord;  /* 0: off; 1..7: the key's seventh chords (i, iv, v, VI, III, VII, ii) */
+    uint8_t  arp_mode;   /* ROTO_ARP_UP .. ROTO_ARP_PEDAL */
+    uint8_t  arp_speed;  /* 0 1/32, 1 1/16, 2 1/8, 3 1/4 */
+    uint8_t  arp_range;  /* octaves 1..4 */
+    uint8_t  arp_gate;   /* note length, percent of a step (5..100) */
+    uint8_t  arp_part;   /* the sound it plays (the ring's, when the screen opened) */
+    uint8_t  arp_len;    /* notes in arp_seq (0: nothing to play) */
+    uint8_t  arp_seq[16];   /* the chord over the range, low to high */
+    /* audio side */
+    uint8_t  arp_cur;    /* index into arp_seq of the note playing (0xFF: none yet), for the screen */
+    uint8_t  arp_note;   /* the note sounding (0xFF: none) ... */
+    uint8_t  arp_npart;  /* ... on this sound */
+    uint8_t  arp_dir;    /* UP-DOWN: 0 going up, 1 down */
+    uint8_t  arp_k;      /* PEDAL: which upper note comes next */
+    uint32_t arp_n32;    /* 1/32s since PLAY */
+    uint32_t arp_gate_left;
 } roto_seq_t;
+
+#define ROTO_ARP_UP     0
+#define ROTO_ARP_DOWN   1
+#define ROTO_ARP_UPDOWN 2
+#define ROTO_ARP_RANDOM 3
+#define ROTO_ARP_PEDAL  4   /* the lowest note between each of the others */
+#define ROTO_ARP_MODES  5
 
 #define ROTO_VIEW_RING   0
 #define ROTO_VIEW_EUCLID 1
 #define ROTO_VIEW_ENV    2
 #define ROTO_VIEW_FLT    3
 #define ROTO_VIEW_DLY    4
+#define ROTO_VIEW_ARP    5
 
 /* what a knob just changed, for roto_ui_show() (the centre shows it for a moment) */
 enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_SHOW_RATE, ROTO_SHOW_PROB, ROTO_SHOW_BPM,
        ROTO_SHOW_ATK, ROTO_SHOW_DEC, ROTO_SHOW_SUS, ROTO_SHOW_REL,
        ROTO_SHOW_BRIGHT, ROTO_SHOW_EDGE, ROTO_SHOW_FENV, ROTO_SHOW_DRIVE,
        ROTO_SHOW_DTIME, ROTO_SHOW_DFDBK, ROTO_SHOW_DSEND, ROTO_SHOW_DCOLOR,
-       ROTO_SHOW_HOLD, ROTO_SHOW_NEW };
+       ROTO_SHOW_HOLD, ROTO_SHOW_NEW,
+       ROTO_SHOW_ACHORD, ROTO_SHOW_AMODE, ROTO_SHOW_ASPEED, ROTO_SHOW_ARANGE, ROTO_SHOW_ALEN };
 
 extern roto_seq_t roto;
 
@@ -123,6 +150,10 @@ void roto_tone_map(uint32_t eng, uint8_t out[3], int *has_env);
 const char *roto_dtime_name(uint32_t t);
 uint32_t roto_dtime_96(uint32_t t);
 uint32_t roto_dtime_step(uint32_t t, int32_t dir);
+
+/* ARP (UI side): arp_seq from the chord, the key and the range; and the chord's name ("A MIN7") */
+void roto_arp_build(void);
+void roto_arp_name(char *out);
 
 /* transport (UI side; the audio side releases notes after a stop) */
 void roto_play(void);

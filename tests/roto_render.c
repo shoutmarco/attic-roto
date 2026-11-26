@@ -210,6 +210,20 @@ int main(int argc, char **argv)
                 printf("  28s  ring 2 %s: BRIGHT to 0%% (dark)\n", roto.snd[1].name);
             }
         }
+        if (getenv("ADEMO") && f % FS < CTL) {           /* ADEMO: the ARP dials on ring 4's sound, one change every 6 s */
+            static const uint8_t CH[5] = {1, 2, 3, 4, 1}, MO[5] = {0, 4, 2, 3, 1}, SPD[5] = {1, 1, 2, 0, 1}, RG[5] = {2, 2, 3, 1, 2}, GT[5] = {40, 30, 70, 25, 40};
+            static const char *const MN[5] = {"UP", "PEDAL", "UP-DOWN", "RANDOM", "DOWN"}, *const SN[4] = {"1/32", "1/16", "1/8", "1/4"};
+            uint32_t sec = f / FS;
+            if (sec >= 2u && (sec - 2u) % 6u == 0u && (sec - 2u) / 6u < 5u) {
+                uint32_t k = (sec - 2u) / 6u;
+                char nm[12];
+                roto.arp_part = 3; roto.arp_chord = CH[k]; roto.arp_mode = MO[k]; roto.arp_speed = SPD[k];
+                roto.arp_range = RG[k]; roto.arp_gate = GT[k];
+                roto_arp_build();
+                roto_arp_name(nm);
+                printf("  %2us  ARP %s %s %s %u oct, length %u%%\n", sec, nm, MN[k], SN[SPD[k]], RG[k], GT[k]);
+            }
+        }
         if (getenv("DEMO") && f % FS < CTL) {            /* DEMO: euclid moves while it plays, one a few seconds */
             uint32_t sec = f / FS, h, s2;
             #define HITS(tk) (h = 0, ({ for (s2 = 0; s2 < roto.trk[tk].len; s2++) h += roto.trk[tk].step[s2].on; }), h)
@@ -235,6 +249,7 @@ int main(int argc, char **argv)
     {
         uint32_t held = 0;
         for (t = 0; t < ROTO_TRACKS; t++) held += roto.trk[t].nheld;
+        held += roto.arp_note != 0xFFu;
         printf("peak %.1f dBFS, %u samples at full scale, notes still held after stop: %u, voices still gated: %u\n",
                peak ? 20.0 * log10((double)peak / 32768.0) : -99.0, clips, held, left);
     }

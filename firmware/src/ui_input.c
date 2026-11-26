@@ -416,7 +416,7 @@ static void ui_leds(void)
         ready = 1;
     }
     (void)fam;                                          /* attic-roto: the lit button is the screen you're on */
-    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : roto.view == ROTO_VIEW_DLY ? B_FX : B_HOME], 1);
+    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : roto.view == ROTO_VIEW_DLY ? B_FX : roto.view == ROTO_VIEW_ARP ? B_ARP : B_HOME], 1);
     if ((k = arp_led()) != 2u && (!ui.layer || layer_btn() != B_ARP))
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3]))
@@ -1572,6 +1572,15 @@ static void ui_input(void)
             }
         }
     }
+    if (roto.view == ROTO_VIEW_ARP) {   /* ARP: K1 CHORD (fully left: off), K2 MODE, K3 SPEED (right: faster),
+                                         * K4 RANGE; PRESETS the NOTE LENGTH. Taken here: the ring knobs see nothing. */
+        int32_t v;
+        if ((v = panel_enc(EN_K1)) != 0) { roto.arp_chord = (uint8_t)clamp((int32_t)roto.arp_chord + v, 0, 7); roto_arp_build(); roto_ui_show(ROTO_SHOW_ACHORD, fm1_ms); }
+        if ((v = panel_enc(EN_K2)) != 0) { roto.arp_mode = (uint8_t)clamp((int32_t)roto.arp_mode + v, 0, ROTO_ARP_MODES - 1); roto_ui_show(ROTO_SHOW_AMODE, fm1_ms); }
+        if ((v = panel_enc(EN_K3)) != 0) { roto.arp_speed = (uint8_t)clamp((int32_t)roto.arp_speed - v, 0, 3); roto_ui_show(ROTO_SHOW_ASPEED, fm1_ms); }
+        if ((v = panel_enc(EN_K4)) != 0) { roto.arp_range = (uint8_t)clamp((int32_t)roto.arp_range + v, 1, 4); roto_arp_build(); roto_ui_show(ROTO_SHOW_ARANGE, fm1_ms); }
+        if ((v = panel_enc(EN_PRESET)) != 0) { roto.arp_gate = (uint8_t)clamp((int32_t)roto.arp_gate + v * 5, 5, 100); roto_ui_show(ROTO_SHOW_ALEN, fm1_ms); }
+    }
     if (roto.view == ROTO_VIEW_DLY) {   /* DELAY: K1 TIME, K2 FEEDBACK, K3 the ring's SEND, K4 COLOUR.
          * roto.dtime / dfdbk / snd[].dly are what dub throws come back to, so they're set first. */
         int32_t v, i;
@@ -1688,6 +1697,7 @@ static void ui_input(void)
         }
         if ((v = panel_enc(EN_ALGO)) != 0) {
             roto.sel = (uint8_t)(((int32_t)roto.sel + v % ROTO_TRACKS + ROTO_TRACKS) % ROTO_TRACKS);
+            if (roto.view == ROTO_VIEW_ARP) { roto.arp_part = roto.trk[roto.sel].part; roto_arp_build(); }   /* (the arp moves to this ring's sound) */
             roto_ui_show(ROTO_SHOW_NONE, fm1_ms);      /* (a new ring: its own numbers) */
         }
         panel_enc(EN_PRESET);                          /* (taken, so a turn here never loads a sound later) */
@@ -1704,6 +1714,16 @@ static void ui_input(void)
     }
     if (pressed & (1u << panel.btn[B_FX])) {                /* FX: the delay (again: back to the ring) */
         roto.view = roto.view == ROTO_VIEW_DLY ? ROTO_VIEW_RING : ROTO_VIEW_DLY;
+        roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
+    }
+    if (pressed & (1u << panel.btn[B_ARP])) {               /* ARP: the arp, on this ring's sound; it starts if off (again: back to the ring) */
+        if (roto.view == ROTO_VIEW_ARP) roto.view = ROTO_VIEW_RING;
+        else {
+            roto.view = ROTO_VIEW_ARP;
+            roto.arp_part = roto.trk[roto.sel < ROTO_TRACKS ? roto.sel : 0].part;
+            if (!roto.arp_chord) roto.arp_chord = 1;
+            roto_arp_build();
+        }
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
     if (pressed & (1u << panel.btn[B_EDIT])) {              /* EDIT: the filter (again: back to the ring) */
@@ -1723,7 +1743,7 @@ static void ui_input(void)
                 int busy = 1;
                 roto_stop();                                  /* (the audio side lets go of its notes ...) */
                 while (busy && fm1_ms - t0 < 100u) {          /* (... wait for that, up to 0.1 s) */
-                    busy = roto.throw_trk < ROTO_PARTS;
+                    busy = roto.throw_trk < ROTO_PARTS || roto.arp_note != 0xFFu;
                     for (t = 0; t < ROTO_TRACKS; t++) busy |= roto.trk[t].nheld != 0u;
                 }
                 roto_seq_blank();
