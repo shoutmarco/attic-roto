@@ -1556,6 +1556,18 @@ static void ui_input(void)
      *   EUCLID  K1 FILL    K2 ROTATE  K3 LENGTH  K4 PROB   (as the euclid reference)
      * SELECT the tempo, ALGO which ring; PRESET does nothing here.
      * Every turn shows its value in the centre for a moment (roto_ui_show). */
+    if (roto.naming) {   /* SAVE: naming. K1 moves along the name, K2 changes the letter; the other dials rest */
+        static const char CH[] = ROTO_NAME_CHARS;
+        int32_t v, k;
+        if ((v = panel_enc(EN_K1)) != 0) roto.name_pos = (uint8_t)clamp((int32_t)roto.name_pos + v, 0, 7);
+        if ((v = panel_enc(EN_K2)) != 0) {
+            const char *p = CH;
+            int32_t n = (int32_t)sizeof CH - 1, at = 0;
+            for (k = 0; k < n; k++) if (p[k] == roto.name_buf[roto.name_pos]) at = k;
+            roto.name_buf[roto.name_pos] = CH[((at + v) % n + n) % n];
+        }
+        panel_enc(EN_K3); panel_enc(EN_K4);
+    }
     {   /* ENVELOPE: K1..K4 attack, decay, sustain, release of the ring's sound (taken first,
          * so the sequencer knobs below see nothing on that screen) */
         static const uint8_t ENV_P[4] = {P_ATK, P_DEC, P_SUS, P_REL};
@@ -1786,29 +1798,41 @@ static void ui_input(void)
             roto.sel = (uint8_t)(((int32_t)roto.sel + v % ROTO_TRACKS + ROTO_TRACKS) % ROTO_TRACKS);
             roto_ui_show(ROTO_SHOW_NONE, fm1_ms);      /* (a new ring: its own numbers) */
         }
-        {   /* PRESETS: dial through the grooves (1..9999, each always the same); it loads when the dial rests */
+        {   /* PRESETS: dial through your saves (by name, first), then the grooves 1..9999 (each always the
+             * same); it loads when the dial rests. roto.gnum: 1..9999 a groove, 10000 + n save n */
             static uint32_t gn_t;
-            if ((v = panel_enc(EN_PRESET)) != 0) {
-                int32_t from = roto.gnum ? (int32_t)roto.gnum : (int32_t)(roto.seed % ROTO_GROOVES);
-                roto.gnum = (uint16_t)((from - 1 + v % (int32_t)ROTO_GROOVES + (int32_t)ROTO_GROOVES) % (int32_t)ROTO_GROOVES + 1);
+            if ((v = panel_enc(EN_PRESET)) != 0 && !roto.naming) {
+                uint32_t list[ROTO_SAVES], nl = 0, i, pos, total;
+                uint32_t at = roto.gnum ? roto.gnum : roto.save_cur < ROTO_SAVES ? 10000u + roto.save_cur : (roto.seed >= 1u && roto.seed <= ROTO_GROOVES ? roto.seed : 1u);
+                for (i = 0; i < ROTO_SAVES; i++) if ((roto.saves_used >> i) & 1u) list[nl++] = i;
+                total = nl + ROTO_GROOVES;
+                pos = nl;                                      /* (groove 1) */
+                if (at >= 10000u) { for (i = 0; i < nl; i++) if (list[i] == at - 10000u) pos = i; }
+                else pos = nl + at - 1u;
+                pos = (uint32_t)(((int32_t)pos + v % (int32_t)total + (int32_t)total) % (int32_t)total);
+                roto.gnum = (uint16_t)(pos < nl ? 10000u + list[pos] : pos - nl + 1u);
                 gn_t = fm1_ms | 1u;
                 if (roto.view != ROTO_VIEW_RING && roto.view != ROTO_VIEW_EUCLID) roto.view = ROTO_VIEW_RING;
                 roto_ui_show(ROTO_SHOW_GNUM, fm1_ms);
             } else if (gn_t && fm1_ms - gn_t >= 450u) {
                 uint32_t t0 = fm1_ms, t, view = roto.view, sel2b = roto.sel, n = roto.gnum;
-                int busy = 1, was = roto.running;
+                int busy = 1;
                 gn_t = 0;
                 roto_stop();                                  /* (the audio side lets go of its notes, up to 0.1 s) */
                 while (busy && fm1_ms - t0 < 100u) {
                     busy = roto.throw_trk < ROTO_PARTS;
                     for (t = 0; t < ROTO_TRACKS; t++) busy |= roto.trk[t].nheld != 0u;
                 }
-                roto_seq_generate(n);
-                roto_apply_sounds();
+                if (n >= 10000u) {
+                    roto_save_load(n - 10000u);
+                } else {
+                    roto_seq_generate(n);
+                    roto_apply_sounds();
+                    roto_saves_read();                        /* (the saves' list: roto_seq_init cleared it) */
+                }
                 roto.view = (uint8_t)view;
                 roto.sel = (uint8_t)sel2b;
                 roto.gnum = (uint16_t)n;
-                (void)was;
                 roto_play();
                 roto_ui_show(ROTO_SHOW_GNUM, fm1_ms);
             }
@@ -1828,6 +1852,26 @@ static void ui_input(void)
         roto.view = roto.view == ROTO_VIEW_DLY ? ROTO_VIEW_RING : ROTO_VIEW_DLY;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
+    if (pressed & (1u << panel.btn[B_SAVE])) {              /* SAVE: name it (first press), keep it (second) */
+        if (!roto.naming) {
+            uint32_t i, n = 0;
+            for (i = 0; i < ROTO_SAVES; i++) n += (roto.saves_used >> i) & 1u;
+            for (i = 0; i < 8u; i++) roto.name_buf[i] = ' ';
+            roto.name_buf[0] = 'S'; roto.name_buf[1] = 'A'; roto.name_buf[2] = 'V'; roto.name_buf[3] = 'E';
+            roto.name_buf[4] = (char)('1' + (n < ROTO_SAVES ? n : ROTO_SAVES - 1u));
+            roto.name_buf[8] = 0;
+            roto.name_pos = 0;
+            roto.naming = 1;
+            if (roto.view != ROTO_VIEW_RING && roto.view != ROTO_VIEW_EUCLID) roto.view = ROTO_VIEW_RING;
+            roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
+        } else {
+            int rc = roto_save_keep(roto.name_buf);
+            roto.naming = 0;
+            if (rc == 0) roto.gnum = (uint16_t)(10000u + roto.save_cur);
+            roto_ui_show(rc == 0 ? ROTO_SHOW_SAVED : ROTO_SHOW_NOTSAVED, fm1_ms);
+        }
+    }
+    if (roto.naming && (pressed & (1u << panel.btn[B_HOME]))) roto.naming = 0;   /* HOME: not saved */
     if (pressed & (1u << panel.btn[B_LFO])) {               /* LFO: the SOUND screen (choose), again: shape 1-4, 5-8, back to the ring */
         if (roto.view != ROTO_VIEW_SND) { roto.view = ROTO_VIEW_SND; roto.spage = 0; }
         else if (++roto.spage > 2u) { roto.view = ROTO_VIEW_RING; roto.spage = 0; }
@@ -1860,6 +1904,7 @@ static void ui_input(void)
                 roto_seq_blank();
                 song.g[G_DCOLOR] = 70;
                 roto_apply_sounds();
+                roto_saves_read();                            /* (the saves' list: roto_seq_init cleared it) */
                 home_fired = 1;
                 roto_ui_show(ROTO_SHOW_NEW, fm1_ms);
             } else if (!home_fired && held >= 400u) {

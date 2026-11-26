@@ -111,6 +111,10 @@ static void roto_boot(void)
     seed ^= fm1_ms * 0x85EBCA6Bu;
     roto_seq_generate(seed % ROTO_GROOVES + 1u);         /* (a number PRESETS can dial back to) */
     roto_apply_sounds();
+    {   /* the latest save, if there is one, comes back */
+        int latest = roto_saves_read();
+        if (latest >= 0) roto_save_load((uint32_t)latest);
+    }
     roto_play();
 }
 
@@ -154,6 +158,90 @@ void roto_apply_part(uint32_t t)
             sd->name[i] = nm[i];
         sd->name[i] = 0;
     }
+}
+
+/* SAVE: eight saves, four to a storage object (storage.c OBJ_ROTO0/1, A/B: a power cut during a save keeps the last) */
+static roto_save_t roto_saves[ROTO_SAVES / 2u] __attribute__((section(".pool")));   /* one object's four, as read or about to be written */
+_Static_assert(sizeof roto_saves <= 3584u, "attic-roto saves: under 0xF00 of the sector (fm1_flash.h)");
+static const uint8_t ROTO_SHAPE_P[5] = {P_ATK, P_DEC, P_SUS, P_REL, P_ED_FLT};
+static uint32_t roto_save_order[ROTO_SAVES];
+
+static void roto_saves_obj(uint32_t o)               /* object o -> roto_saves (none yet: all empty) */
+{
+    uint32_t i;
+    uint8_t *p = (uint8_t *)roto_saves;
+    if (st_load(OBJ_ROTO0 + o, roto_saves, sizeof roto_saves) != (int)sizeof roto_saves)
+        for (i = 0; i < sizeof roto_saves; i++) p[i] = 0;
+}
+
+int roto_saves_read(void)
+{
+    uint32_t o, i, c, best = 0;
+    int latest = -1;
+    roto.saves_used = 0;
+    for (o = 0; o < 2u; o++) {
+        roto_saves_obj(o);
+        for (i = 0; i < ROTO_SAVES / 2u; i++) {
+            const roto_save_t *s = &roto_saves[i];
+            uint32_t n = o * 4u + i;
+            roto.save_name[n][0] = 0;
+            roto_save_order[n] = 0;
+            if (s->magic != ROTO_SAVE_MAGIC) continue;
+            roto.saves_used |= (uint8_t)(1u << n);
+            for (c = 0; c < 8u && s->name[c]; c++) roto.save_name[n][c] = s->name[c];
+            roto.save_name[n][c] = 0;
+            roto_save_order[n] = s->order;
+            if (latest < 0 || s->order > best) { best = s->order; latest = (int)n; }
+        }
+    }
+    return latest;
+}
+
+int roto_save_keep(const char *name)
+{
+    uint32_t n, i, t, k, order = 0;
+    roto_save_t *s;
+    roto_saves_read();
+    for (i = 0; i < ROTO_SAVES; i++) if (roto_save_order[i] > order) order = roto_save_order[i];
+    for (n = 0; n < ROTO_SAVES && ((roto.saves_used >> n) & 1u); n++) ;
+    if (n == ROTO_SAVES)                                  /* all eight used: over the oldest */
+        for (n = 0, i = 1; i < ROTO_SAVES; i++) if (roto_save_order[i] < roto_save_order[n]) n = i;
+    roto_saves_obj(n / 4u);
+    s = &roto_saves[n % 4u];
+    roto_save_take(s);
+    s->order = order + 1u;
+    for (i = 0; i < 8u && name[i]; i++) s->name[i] = name[i];
+    while (i > 0u && s->name[i - 1u] == ' ') s->name[--i] = 0;   /* (no trailing spaces) */
+    for (t = 0; t < ROTO_PARTS && t < NTRK; t++) {
+        for (k = 0; k < 5u; k++) s->shape[t][k] = trk[t].p[ROTO_SHAPE_P[k]];
+        for (k = 0; k < 8u; k++) s->shape[t][5u + k] = trk[t].p[P_E0 + k];
+    }
+    if (st_save(OBJ_ROTO0 + n / 4u, roto_saves, sizeof roto_saves) != 0) { roto_saves_read(); return -2; }
+    roto_saves_read();
+    roto.save_cur = (uint8_t)n;
+    return 0;
+}
+
+int roto_save_load(uint32_t n)
+{
+    const roto_save_t *s;
+    uint32_t t, k;
+    if (n >= ROTO_SAVES) return -1;
+    roto_saves_obj(n / 4u);
+    s = &roto_saves[n % 4u];
+    if (s->magic != ROTO_SAVE_MAGIC) return 1;
+    roto_save_give(s);
+    for (t = 0; t < ROTO_PARTS && t < NTRK; t++) {
+        roto_apply_part(t);
+        for (k = 0; k < 5u; k++) trk[t].p[ROTO_SHAPE_P[k]] = s->shape[t][k];
+        for (k = 0; k < 8u; k++) trk[t].p[P_E0 + k] = s->shape[t][5u + k];
+    }
+    song.g[G_BPM] = roto.bpm;
+    song.g[G_DTIME] = roto.dtime;
+    song.g[G_DFDBK] = roto.dfdbk;
+    song.g[G_DCOLOR] = roto.dcolor;
+    roto.save_cur = (uint8_t)n;
+    return 0;
 }
 
 void roto_apply_sounds(void)

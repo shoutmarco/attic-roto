@@ -268,6 +268,8 @@ static struct {
     uint8_t ghost[ROTO_STEPS];
     uint8_t g_swing, g_evolve, g_dub;
     uint16_t gnum;
+    uint8_t naming, name_pos, save_cur;
+    char name[9];
     uint8_t spage, s_drum, s_cat, s_idx, s_kit, s_piece, s_level;
     int8_t s_pan;
     int8_t ed[8];
@@ -299,6 +301,16 @@ static void rt_snapshot(void)
         }
     }
     rt_sn.g_swing = roto.swing; rt_sn.g_evolve = roto.evolve; rt_sn.g_dub = roto.dub;
+    rt_sn.naming = roto.naming; rt_sn.name_pos = roto.name_pos < 8u ? roto.name_pos : 0u;
+    rt_sn.save_cur = roto.save_cur;
+    {
+        uint32_t c;
+        const char *src = roto.naming ? roto.name_buf : roto.gnum >= 10000u && roto.gnum - 10000u < ROTO_SAVES ? roto.save_name[roto.gnum - 10000u]
+                        : roto.save_cur < ROTO_SAVES ? roto.save_name[roto.save_cur] : "";
+        for (c = 0; c < 8u && src[c]; c++) rt_sn.name[c] = src[c];
+        for (; c < 8u; c++) rt_sn.name[c] = roto.naming ? ' ' : 0;
+        rt_sn.name[8] = 0;
+    }
     rt_sn.gnum = roto.gnum ? roto.gnum : (uint16_t)(roto.seed <= ROTO_GROOVES ? roto.seed : 0u);
     {
         const roto_sound_t *sd = &roto.snd[rt_sn.part];
@@ -380,8 +392,36 @@ static void rt_draw_header(void)
 
 /* the centre: the hits and "OF n"; while a knob turns, its value and name
  * (the name in the track colour) instead; on EUCLID also "ROT r  p%" */
+static void rt_draw_name_centre(void)
+{
+    uint16_t col = RT_TRK_COL[rt_sn.sel];
+    char t[9];
+    uint32_t i, n = 0;
+    int32_t x0;
+    if (rt_sn.naming) {                                      /* SAVE: the name being set, the letter K1 is on underlined */
+        for (i = 0; i < 8u; i++) t[i] = rt_sn.name[i] ? rt_sn.name[i] : ' ';
+        t[8] = 0;
+        x0 = RT_CX - 32;
+        rt_text_s(RT_CX - RT_TEXT_S_W("NAME") / 2, RT_CY - 26, "NAME", col);
+        rt_text_b(x0, RT_CY - 10, t, 1, RT_TEXT);
+        rt_rect(x0 + (int32_t)rt_sn.name_pos * 8, RT_CY + 5, x0 + (int32_t)rt_sn.name_pos * 8 + 7, RT_CY + 7, col);
+        rt_text_s(RT_CX - RT_TEXT_S_W("SAVE: KEEP") / 2, RT_CY + 14, "SAVE: KEEP", RT_GREY);
+        return;
+    }
+    for (i = 0; i < 8u && rt_sn.name[i]; i++) n++;           /* a save's name (dialled, or just kept) */
+    rt_text_b(RT_CX - (int32_t)n * 4, RT_CY - 10, rt_sn.name, 1, RT_TEXT);
+    rt_text_s(RT_CX - RT_TEXT_S_W(rt_sn.show == ROTO_SHOW_SAVED ? "SAVED" : rt_sn.show == ROTO_SHOW_NOTSAVED ? "NOT SAVED" : "SAVE") / 2, RT_CY + 10,
+              rt_sn.show == ROTO_SHOW_SAVED ? "SAVED" : rt_sn.show == ROTO_SHOW_NOTSAVED ? "NOT SAVED" : "SAVE",
+              rt_sn.show == ROTO_SHOW_NOTSAVED ? RT_PINK : col);
+}
+
 static void rt_draw_centre(void)
 {
+    if (rt_sn.naming || rt_sn.show == ROTO_SHOW_SAVED || rt_sn.show == ROTO_SHOW_NOTSAVED || (rt_sn.show == ROTO_SHOW_GNUM && rt_sn.gnum >= 10000u)) {
+        rt_draw_name_centre();
+        return;
+    }
+    {
     static const char *const RT_DIVS[5] = {"1/16", "1/16", "1/8", "3/16", "1/4"};
     static const char *const RT_SHOWN[11] = {"", "LENGTH", "FILL", "ROTATE", "RATE", "PROB", "BPM", "ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
     static const char *const RT_DSHOWN[4] = {"TIME", "FEEDBACK", "SEND", "COLOUR"};
@@ -469,6 +509,7 @@ static void rt_draw_centre(void)
         n = rt_strlen(e); e[n] = '%'; e[n + 1] = 0;
         rt_text_s(RT_CX - RT_TEXT_S_W(e) / 2, RT_CY + 21, e, RT_GREY);
     }
+}
 }
 
 static void rt_draw_ring(void)
@@ -1350,6 +1391,8 @@ static uint32_t rt_ring_sig(void)
     h = rt_fnv(h, rt_sn.len);
     h = rt_fnv(h, rt_sn.view);
     h = rt_fnv(h, rt_sn.show);
+    h = rt_fnv(h, rt_sn.naming); h = rt_fnv(h, rt_sn.name_pos);
+    { uint32_t c; for (c = 0; c < 8u; c++) h = rt_fnv(h, (uint8_t)rt_sn.name[c]); }
     if (rt_sn.show) { h = rt_fnv(h, rt_sn.gnum); h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); h = rt_fnv(h, rt_sn.div); h = rt_fnv(h, rt_sn.bpm); }
     else if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); }
     if (rt_sn.view == ROTO_VIEW_ENV) { uint32_t e; for (e = 0; e < 4u; e++) h = rt_fnv(h, rt_sn.env[e]); }

@@ -89,6 +89,12 @@ typedef struct {
     char     ed_lbl[8][6];   /* their names */
     char     ed_txt[8][7];   /* their values as text ("64%", "SAW") */
     uint8_t  kpage;      /* the step keys show steps 1-16 (0) or 17-32 (1): OCT- / OCT+ */
+    uint8_t  saves_used; /* SAVE: bit n, save n holds a groove (main.c reads them at power-on) */
+    char     save_name[8][9];   /* their names */
+    uint8_t  save_cur;   /* the save last loaded or kept (0xFF: none) */
+    uint8_t  naming;     /* SAVE pressed: the name is being set (K1 moves, K2 the letter; SAVE keeps, HOME cancels) */
+    uint8_t  name_pos;   /* the letter K1 is on */
+    char     name_buf[9];
     uint16_t gnum;       /* PRESETS: the groove number being dialled (shown while turning; 0: none) */
     uint8_t  dub;        /* GROOVE: 0..100, how often a sound is thrown into the echo (a bar or so) */
 } roto_seq_t;
@@ -108,7 +114,8 @@ enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_
        ROTO_SHOW_DTIME, ROTO_SHOW_DFDBK, ROTO_SHOW_DSEND, ROTO_SHOW_DCOLOR,
        ROTO_SHOW_HOLD, ROTO_SHOW_NEW,
        ROTO_SHOW_GBPM, ROTO_SHOW_GSWING, ROTO_SHOW_GEVOLVE, ROTO_SHOW_GDUB,
-       ROTO_SHOW_GNUM,   /* PRESETS: a groove number (roto.gnum) */
+       ROTO_SHOW_GNUM,   /* PRESETS: a groove number (roto.gnum), or a save's name (roto.gnum >= 10000: save gnum - 10000) */
+       ROTO_SHOW_SAVED, ROTO_SHOW_NOTSAVED,
        ROTO_SHOW_S1, ROTO_SHOW_S2, ROTO_SHOW_S3, ROTO_SHOW_S4 };   /* SOUND: K1..K4 (the page says which) */
 
 extern roto_seq_t roto;
@@ -157,6 +164,30 @@ uint32_t roto_piece_count(void);
 const char *roto_piece_name(uint32_t p);
 uint32_t roto_piece_of(uint32_t ring);       /* the ring's main piece (its first hit's), index */
 void roto_piece_set(uint32_t ring, uint32_t p);   /* the ring's main piece becomes p (its hits, FILL's note, home) */
+/* SAVE: a groove kept by name: the rings, tempo, key, feel, and the four sounds as chosen and shaped */
+#define ROTO_SAVES 8u
+#define ROTO_SAVE_MAGIC 0x32534F52u   /* "ROS2" */
+#define ROTO_NAME_CHARS " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+typedef struct {
+    roto_step_t step[ROTO_STEPS];
+    uint8_t len, div, gate, part, prob, fill_note, rot, lag;
+    int8_t chord[ROTO_CHORD];
+} roto_save_ring_t;
+typedef struct {
+    uint32_t magic, order;       /* order: higher = saved later (power-on brings back the latest) */
+    uint16_t gnum;
+    char name[10];
+    uint8_t bpm, swing, root, mode, dtime, dfdbk, dcolor, evolve, dub, rsv[3];
+    roto_save_ring_t ring[ROTO_TRACKS];
+    roto_sound_t snd[ROTO_PARTS];
+    int16_t shape[ROTO_PARTS][13];   /* each sound as shaped: ATK DEC SUS REL, ENV>FILTER, its eight own settings (main.c) */
+} roto_save_t;
+void roto_save_take(roto_save_t *s);          /* roto -> s (not the shape: main.c) */
+void roto_save_give(const roto_save_t *s);    /* s -> roto (not the sounds: main.c) */
+int roto_saves_read(void);                    /* (main.c) the saves' names -> roto.saves_used, save_name; the latest, or -1 */
+int roto_save_keep(const char *name);         /* (main.c) a new save (or over the oldest when all 8 are used); 0: saved */
+int roto_save_load(uint32_t n);               /* (main.c) 0: loaded */
+
 /* (main.c) give part t the sound in roto.snd[t] */
 void roto_apply_part(uint32_t t);
 

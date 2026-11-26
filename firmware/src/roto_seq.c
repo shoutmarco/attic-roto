@@ -44,6 +44,7 @@ void roto_seq_init(void)
         roto.trk[t].prob = 100;
     }
     roto.dub = 50;
+    roto.save_cur = 0xFF;
 }
 
 /* ------------------------------------------------------------- generator */
@@ -750,6 +751,52 @@ uint32_t roto_dtime_step(uint32_t t, int32_t dir)
     if (at < 0) at = 0;
     if (at > 12) at = 12;
     return DT_ORDER[at];
+}
+
+/* ------------------------------------------------------------- SAVE (UI side) */
+void roto_save_take(roto_save_t *s)
+{
+    uint32_t t, i;
+    uint8_t *p = (uint8_t *)s;
+    for (i = 0; i < sizeof *s; i++) p[i] = 0;
+    s->magic = ROTO_SAVE_MAGIC;
+    s->gnum = (uint16_t)(roto.seed <= ROTO_GROOVES ? roto.seed : 0u);
+    s->bpm = roto.bpm; s->swing = roto.swing; s->root = roto.root; s->mode = roto.mode;
+    s->dtime = roto.dtime; s->dfdbk = roto.dfdbk; s->dcolor = roto.dcolor; s->evolve = roto.evolve; s->dub = roto.dub;
+    for (t = 0; t < ROTO_TRACKS; t++) {
+        const roto_track_t *k = &roto.trk[t];
+        roto_save_ring_t *r = &s->ring[t];
+        for (i = 0; i < ROTO_STEPS; i++) r->step[i] = k->step[i];
+        r->len = k->len; r->div = k->div; r->gate = k->gate; r->part = k->part;
+        r->prob = k->prob; r->fill_note = k->fill_note; r->rot = k->rot; r->lag = k->lag;
+        for (i = 0; i < ROTO_CHORD; i++) r->chord[i] = k->chord[i];
+    }
+    for (t = 0; t < ROTO_PARTS; t++) s->snd[t] = roto.snd[t];
+}
+
+void roto_save_give(const roto_save_t *s)
+{
+    uint32_t t, i;
+    roto.seed = s->gnum;
+    roto.bpm = s->bpm < 40u ? 40u : s->bpm > 240u ? 240u : s->bpm;
+    roto.swing = s->swing < 50u || s->swing > 75u ? 50u : s->swing;
+    roto.root = s->root % 12u; roto.mode = s->mode % 3u;
+    roto.dtime = s->dtime; roto.dfdbk = s->dfdbk; roto.dcolor = s->dcolor;
+    roto.evolve = s->evolve <= 100u ? s->evolve : 50u; roto.dub = s->dub <= 100u ? s->dub : 50u;
+    for (t = 0; t < ROTO_TRACKS; t++) {
+        roto_track_t *k = &roto.trk[t];
+        const roto_save_ring_t *r = &s->ring[t];
+        k->len = r->len >= 1u && r->len <= ROTO_STEPS ? r->len : 16u;
+        k->div = r->div >= 1u && r->div <= 4u ? r->div : 1u;
+        k->gate = r->gate ? r->gate : 50u; k->part = r->part % ROTO_PARTS;
+        k->prob = r->prob <= 100u ? r->prob : 100u; k->fill_note = r->fill_note; k->rot = r->rot;
+        k->lag = r->lag <= 40u ? r->lag : 0u;
+        for (i = 0; i < ROTO_CHORD; i++) k->chord[i] = r->chord[i];
+        for (i = 0; i < ROTO_STEPS; i++) { k->step[i] = r->step[i]; k->home[i] = r->step[i]; }
+        k->fill_n = 0;
+        if (k->pos != ROTO_POS_START && k->pos >= k->len) k->pos = 0;
+    }
+    for (t = 0; t < ROTO_PARTS; t++) roto.snd[t] = s->snd[t];
 }
 
 /* ------------------------------------------------------------- SOUND (UI side) */
