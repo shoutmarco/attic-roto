@@ -89,6 +89,12 @@ static void host_roto_boot(uint32_t seed)
         const engine_t *e;
         const char *nm;
         host_preset(tk, sd->eng, sd->preset);
+        if (sd->eng == ROTO_ENG_DRUM) {                       /* (main.c roto_apply_part: the kit's KIT over its preset) */
+            uint8_t pr; int32_t kv;
+            roto_kit_sound(sd->kit, &pr, &kv);
+            if (kv >= 0) tk->p[P_E0] = (int16_t)kv;
+            for (i = 0; i < 8u; i++) { int32_t tv = roto_kit_tweak(sd->kit, i); if (tv >= 0) tk->p[P_E0 + i] = (int16_t)tv; }
+        }
         tk->p[P_LEVEL] = sd->level;
         tk->p[P_MUTE] = 0;
         tk->p[P_PAN] = sd->pan;
@@ -162,6 +168,11 @@ int main(int argc, char **argv)
         song.g[G_DCOLOR] = (int16_t)col;
         roto.evolve = 0;                            /* (no throws: measure the setting itself) */
     }
+    if (getenv("DE")) {                             /* DE=i:v,i:v: the SOLO ring's own settings E(i+1) = v (calibration) */
+        const char *q = getenv("DE"); unsigned ei, ev; int nn;
+        while (sscanf(q, "%u:%u%n", &ei, &ev, &nn) == 2) { trk[solo ? solo - 1u : 0u].p[P_E0 + (ei & 7u)] = (int16_t)ev; q += nn; if (*q == ',') q++; else break; }
+    }
+    if (getenv("MUTE")) roto.mute = (uint8_t)strtoul(getenv("MUTE"), 0, 0);   /* MUTE=bits: those rings silent (bit 0 ring 1) */
     if (getenv("NOFX"))                             /* NOFX: no delay, reverb, chorus, throws (measure the sound itself) */
         for (t = 0; t < NTRK; t++) { trk[t].p[P_DLY] = 0; trk[t].p[P_REV] = 0; trk[t].p[P_CHOR] = 0; roto.evolve = 0; }
     if (solo)

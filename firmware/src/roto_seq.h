@@ -180,6 +180,7 @@ uint32_t roto_cat_size(uint32_t c);
 void roto_cat_sound(uint32_t c, uint32_t i, uint8_t *eng, uint8_t *preset);
 void roto_cat_find(uint32_t eng, uint32_t preset, uint32_t *c, uint32_t *i);   /* (not listed: 0, 0) */
 uint32_t roto_kit_count(void);
+int32_t roto_kit_tweak(uint32_t k, uint32_t e);   /* a kit's own value for its setting E(e+1) over the preset's, or -1 */
 const char *roto_kit_name(uint32_t k);
 void roto_kit_sound(uint32_t k, uint8_t *preset, int32_t *kitval);   /* kitval: the KIT setting (-1: the preset's own) */
 uint32_t roto_piece_count(void);

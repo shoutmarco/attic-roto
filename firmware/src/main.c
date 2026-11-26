@@ -152,6 +152,7 @@ void roto_apply_part(uint32_t t)
             int32_t kv;
             roto_kit_sound(sd->kit, &pr, &kv);
             if (kv >= 0) tk->p[P_E0] = (int16_t)kv;
+            for (i = 0; i < 8u; i++) { int32_t tv = roto_kit_tweak(sd->kit, i); if (tv >= 0) tk->p[P_E0 + i] = (int16_t)tv; }
             nm = roto_kit_name(sd->kit);
         }
         for (i = 0; i + 1u < sizeof sd->name && nm[i]; i++)

@@ -71,10 +71,10 @@ static void put(roto_track_t *k, uint32_t s, uint32_t note, uint32_t vel)
  * above 4 kHz; the bells, METAL, GLITCH, ARP 8BIT, RAVE, RESO, WOW BASS and the bright drum
  * kit are out). Levels (P_LEVEL: 112 = 0 dB, 0.5 dB a step) from the same renders: drums
  * loudest, bass about 3 dB under, chords and blips further back. */
-static const uint8_t SND_DRUMS[][3] = {{10, 0, 113}, {10, 1, 113}, {10, 3, 113}};                 /* DRUM KIT, DEEP KIT, PERC KIT */
-static const uint8_t SND_BASS[][3]  = {{0, 7, 111}, {0, 2, 118}};                                /* SUB BASS, SQR BASS (Juno-like; round, up front) */
-static const uint8_t SND_STAB[][3]  = {{12, 0, 100}, {0, 3, 101}};                               /* TINE EP, PWM STR (soft, held) */
-static const uint8_t SND_BLIP[][3]  = {{0, 5, 100}, {7, 3, 108}};                               /* SINE KEY, SOFT FLUTE (the soft ones, set back) */
+static const uint8_t SND_DRUMS[][3] = {{10, 0, 116}, {10, 1, 116}, {10, 3, 116}};                 /* DRUM KIT, DEEP KIT, PERC KIT */
+static const uint8_t SND_BASS[][3]  = {{0, 7, 126}, {0, 2, 127}};                                /* SUB BASS, SQR BASS (Juno-like; round, up front) */
+static const uint8_t SND_STAB[][3]  = {{12, 0, 121}, {0, 3, 122}};                               /* TINE EP, PWM STR (soft, held) */
+static const uint8_t SND_BLIP[][3]  = {{0, 5, 111}, {7, 3, 119}};                               /* SINE KEY, SOFT FLUTE (the soft ones, set back) */
 #define NSND(a) ((uint32_t)(sizeof a / sizeof a[0]))
 #define ENG_DRUM 10u                                            /* (engines.c: DRUM) */
 
@@ -120,31 +120,31 @@ typedef struct {
 static const roto_groove_t GROOVES[] = {
     /* -- Weatherall -- */
     /* drug chug */      {"X...X...X...X...", "..X...x...X...x.", "....X.......X..g", "..1..18...1..1.7", "...a............", "......................5.........",
-                          46, 39, 16, 1, 105, 55, 45, 25, 14, 6, 8, 0},
+                          42, 39, 16, 1, 105, 53, 45, 25, 14, 6, 8, 0},
     /* Sabres dub */     {"X...X...X...X.x.", ".gX..gXg.gX..gXg", "....X..g....X...", "1.....1...5.....1.....1...8...7.", "....a...........", "..............................3.",
-                          42, 38, 16, 1, 108, 54, 70, 25, 12, 4, 8, 0},
+                          42, 38, 16, 1, 108, 53, 70, 25, 12, 4, 8, 0},
     /* lazy stroll */    {"X...X...X...X...", "gxXggxXggxXggxXg", "......X.......X.", "..1..3.5.........5.3..1.....8...", "..a.............", "........8.......................",
-                          70, 37, 16, 1, 103, 57, 55, 60, 16, 0, 10, 0},
+                          70, 37, 16, 1, 103, 54, 55, 60, 16, 0, 10, 0},
     /* spacy disco */    {"X...X...X...X...", "..X...X...X...X.", "..x..x....x.", "..8..18...8..18.", "a.......b.......", "1.......5...........3...........",
-                          46, 56, 12, 1, 110, 55, 35, 90, 10, 0, 6, 0},
+                          42, 56, 12, 1, 110, 53, 35, 90, 10, 0, 6, 0},
     /* -- Baby Ford -- */
-    /* rolling */        {"X...X...X...X...", "..X.g.X.g.X.g.Xg", ".g..x..g.g..x..g", "1.11..1.1.11..8.", "..a.......a.....", "",
-                          42, 37, 16, 1, 122, 58, 40, 20, 6, 3, 8, 1},
+    /* rolling */        {"X...X...X...X...", "..X.g.X.g.X.g.Xg", ".g..x..g.g..x", "1.11..1.1.11..8.", "..a.......a.....", "",
+                          42, 37, 13, 1, 126, 52, 40, 20, 6, 3, 8, 1},
     /* deep minimal */   {"X...X..xX...X...", "..X...x...X...x.", "....X.......X...", "..1...1.....5...", "a...............", "...........8.................5..",
-                          42, 39, 16, 1, 121, 56, 50, 90, 6, 8, 8, 1},
+                          42, 39, 16, 1, 124, 51, 50, 90, 6, 8, 8, 1},
     /* bubbling */       {"X...X...X...X...", "gxXggxXggxXggxXg", "x..g..x.g...", "1.8.1.8.1.8.1.88", "......a.........", "",
-                          70, 63, 12, 1, 123, 57, 30, 25, 4, 0, 10, 1},
+                          70, 63, 12, 1, 128, 52, 30, 25, 4, 0, 10, 1},
     /* marble */         {"X...X...X...X...", "..X...X...X...x.", "..g...........x...........g.", "..1.....1.1.....5..1.....8.1....", "...a........b...", "",
-                          46, 37, 28, 1, 120, 56, 45, 25, 6, 0, 8, 1},
+                          42, 37, 28, 1, 125, 51, 45, 25, 6, 0, 8, 1},
     /* -- Villalobos -- */
     /* electro 8ths */   {"X...X...X...X...", "x.X.x.X.x.X.x.X.", "......x.....x..x......x....x....", "..1...1...1...1.", "", "1.......5.......3.......2.......",
-                          42, 45, 32, 2, 126, 54, 25, 25, 4, 5, 12, 2},
+                          42, 45, 32, 2, 130, 51, 25, 25, 4, 5, 12, 2},
     /* tambours */       {"X...X...X...X...", "ggXgggXgggXgggXg", "x..g.x.", "..1.....1..1....", "a...............", "",
-                          70, 63, 7, 1, 124, 56, 45, 90, 4, 0, 15, 2},
+                          70, 63, 7, 1, 134, 52, 45, 90, 4, 0, 15, 2},
     /* easy */           {"X...X...X...X...", "..X...X...X...X.", "x...g..x...", "..1..5.....3.1....1..5.....7.8..", "", "5.......3.......1.......2.......",
-                          42, 75, 11, 2, 124, 55, 45, 25, 4, 3, 12, 2},
-    /* ostinato */       {"X...X...X...X...", "..x...x...x...x.", "x..g...x....g..x....", "1..1..1...1..1..", "..........a.....", "8.6.5...8.6.5...8.6.5.3.........",
-                          46, 37, 20, 1, 127, 56, 35, 25, 4, 2, 12, 2},
+                          42, 75, 11, 2, 124, 52, 45, 25, 4, 3, 12, 2},
+    /* ostinato */       {"X...X...X...X...", "..x...x...x...x.", "x..g...x....g..x...", "1..1..1...1..1..", "..........a.....", "8.6.5...8.6.5...8.6.5.3.........",
+                          42, 37, 19, 1, 128, 51, 35, 25, 4, 2, 12, 2},
 };
 #define NGROOVE ((uint32_t)(sizeof GROOVES / sizeof GROOVES[0]))
 
@@ -194,17 +194,15 @@ void roto_seq_generate(uint32_t seed)
     /* 1: the kick, alone */
     k = &roto.trk[0];
     k->len = 16; k->div = 1; k->gate = 25; k->fill_note = 36;
-    groove_ring(k, g->kick, 36, 16, 100);
-    if (g->style == 0u) { sound(&roto.snd[0], SND_DRUMS[1], 0, 28, 0, 0); roto.snd[0].kit = 6; }   /* Weatherall: DEEP KIT, a rounder kick, more room */
-    else sound(&roto.snd[0], SND_DRUMS[0], 0, 18, 0, 0);        /* DRUM KIT (it has every piece the grooves use) */
+    groove_ring(k, g->kick, 36, 16, 84);                          /* (the bass as loud as the kick, as on the records) */
+    if (g->style == 0u) { sound(&roto.snd[0], SND_DRUMS[1], 0, 28, 0, 0); roto.snd[0].kit = 10; }   /* Weatherall: SUB KIT, more room */
+    else { sound(&roto.snd[0], SND_DRUMS[0], 0, 18, 0, 0); roto.snd[0].kit = 9; }               /* ROUND KIT (every piece the grooves use) */
 
     /* 2: the bass (one or two bars); maybe one note an octave over, maybe one a 1/16 later (never onto a beat) */
     k = &roto.trk[1];
     blen = (uint32_t)rt_strlen0(g->bass);
     k->len = (uint8_t)(blen > 16u ? 32u : 16u); k->div = 1; k->gate = g->bgate; k->lag = g->blag;
-    base = 36u + pc;
-    if (pc >= 7u) base -= 12u;
-    if (g->style == 0u && pc >= 4u && base >= 36u) base -= 12u;   /* (Weatherall: deeper, E1 .. D#2) */
+    base = 26u + (pc + 10u) % 12u;                               /* (D1 .. C#2, 37 .. 69 Hz: where the records' sub sits) */
     k->fill_note = (uint8_t)base;
     for (s = 0; s < blen && s < ROTO_STEPS; s++) {
         char c = g->bass[s];
@@ -239,12 +237,13 @@ void roto_seq_generate(uint32_t seed)
     k = &roto.trk[2];
     k->len = 16; k->div = 2; k->gate = g->cgate; k->lag = 6;
     k->chord[0] = 3; k->chord[1] = 7; k->chord[2] = 10;
-    k->fill_note = (uint8_t)(48u + pc);
+    n = 55u + (pc + 5u) % 12u;                                   /* (G3 .. F#4: over the box at 150..500 Hz the records keep clear) */
+    k->fill_note = (uint8_t)n;
     {
         uint32_t home = chance(30) ? STAB_ROOT[roto.mode][1] : 0u;
         for (s = 0; s < 16u && g->chord[s]; s++)
             if (g->chord[s] == 'a' || g->chord[s] == 'b')
-                put(k, s, 48u + pc + (g->chord[s] == 'a' ? home : STAB_ROOT[roto.mode][2]), 64u + rnd(16u));
+                put(k, s, n + (g->chord[s] == 'a' ? home : STAB_ROOT[roto.mode][2]) - (n + STAB_ROOT[roto.mode][2] > 70u && g->chord[s] == 'b' ? 12u : 0u), 64u + rnd(16u));
     }
     sound(&roto.snd[2], SND_STAB[rnd(NSND(SND_STAB))], g->style == 0u ? 104u : 82u, g->style == 0u ? 62u : 52u, 20, -22);   /* (Weatherall: deeper into the echo) */
     roto.snd[2].drift = (int8_t)(44 + (int32_t)rnd(12u));
@@ -264,13 +263,14 @@ void roto_seq_generate(uint32_t seed)
     /* 5: one hat (loud on the off-beats, ghosts between) */
     k = &roto.trk[4];
     k->len = 16; k->div = 1; k->gate = 25; k->fill_note = g->hat_note;
-    groove_ring(k, g->hat, g->hat_note, 16, 50);
+    groove_ring(k, g->hat, g->hat_note, 16, 92);                 /* (the records' hats: clear, up front) */
 
     /* 6: one percussion, often on a loop of its own length (it drifts against the bar); maybe one hit fewer */
     k = &roto.trk[5];
     k->part = 0;
     k->len = g->perc_len; k->div = 1; k->gate = 25; k->fill_note = g->perc_note; k->lag = g->plag;
-    groove_ring(k, g->perc, g->perc_note, g->perc_len, 66);
+    groove_ring(k, g->perc, g->perc_note, g->perc_len,           /* (low drums back: they fill 150..500 Hz) */
+                g->perc_note == 45u || g->perc_note == 60u || g->perc_note == 63u || g->perc_note == 64u ? 60u : 86u);
     n = ring_hits(k);
     if (n > 3u && chance(30)) {
         uint32_t r = rnd(n);
@@ -948,13 +948,30 @@ void roto_cat_find(uint32_t eng, uint32_t preset, uint32_t *c, uint32_t *i)
     *c = 0; *i = 0;
 }
 
-/* the kits: Felucca's STD, the drum-machine models (KIT 80 10 66 55 77), DEEP TIGHT PERC */
-static const char *const KIT_NAME[9] = {"STD KIT", "80 KIT", "10 KIT", "66 KIT", "55 KIT", "77 KIT", "DEEP KIT", "TIGHT KIT", "PERC KIT"};
-static const uint8_t KIT_PRESET[9] = {0, 0, 0, 0, 0, 0, 1, 2, 3};
-static const int8_t KIT_VAL[9] = {-1, 4, 5, 6, 7, 8, -1, -1, -1};
-uint32_t roto_kit_count(void) { return 9u; }
-const char *roto_kit_name(uint32_t k) { return KIT_NAME[k % 9u]; }
-void roto_kit_sound(uint32_t k, uint8_t *preset, int32_t *kitval) { *preset = KIT_PRESET[k % 9u]; *kitval = KIT_VAL[k % 9u]; }
+/* the kits: the STD kit, the drum-machine models (KIT 80 10 66 55 77), DEEP TIGHT PERC, and two with the kick
+ * where the reference records have it (measured with tests/roto_render.c against Baby Ford, birds and Villalobos:
+ * their kicks peak at 45..55 Hz, most of the energy under 60 Hz, a long tail):
+ *   ROUND KIT  the STD kit (every GM piece), KICK ROUND, TUNE 61, DECY 88, TONE 82: the kick's weight at 45..60 Hz
+ *   SUB KIT    the DEEP kit, TUNE 60, DECY 90, TONE 82: deeper still (the Weatherall grooves)
+ * (TUNE and DECY move every piece a little: the hats come down a touch, out of the fizz over 8 kHz) */
+#define NKIT 11u
+static const char *const KIT_NAME[NKIT] = {"STD KIT", "80 KIT", "10 KIT", "66 KIT", "55 KIT", "77 KIT", "DEEP KIT", "TIGHT KIT", "PERC KIT",
+                                           "ROUND KIT", "SUB KIT"};
+static const uint8_t KIT_PRESET[NKIT] = {0, 0, 0, 0, 0, 0, 1, 2, 3, 0, 1};
+static const int8_t KIT_VAL[NKIT] = {-1, 4, 5, 6, 7, 8, -1, -1, -1, -1, -1};
+static const int8_t KIT_TWEAK[NKIT][4] = {   /* TUNE, DECY, KICK, TONE over the preset's (-1: as it is) */
+    {-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1},
+    {-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1},
+    {61, 88, 1, 82}, {60, 90, -1, 82},
+};
+uint32_t roto_kit_count(void) { return NKIT; }
+const char *roto_kit_name(uint32_t k) { return KIT_NAME[k % NKIT]; }
+void roto_kit_sound(uint32_t k, uint8_t *preset, int32_t *kitval) { *preset = KIT_PRESET[k % NKIT]; *kitval = KIT_VAL[k % NKIT]; }
+int32_t roto_kit_tweak(uint32_t k, uint32_t e)   /* the kit's own value for setting E(e+1), or -1 */
+{
+    const int8_t *t = KIT_TWEAK[k % NKIT];
+    return e == 1u ? t[0] : e == 3u ? t[1] : e == 6u ? t[2] : e == 2u ? t[3] : -1;
+}
 
 /* the pieces a drum ring can play (General MIDI notes: the STD kit has them all; a model kit plays its own
  * piece in the same lane) */
