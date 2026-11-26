@@ -189,7 +189,7 @@ void roto_seq_generate(uint32_t seed)
     if (g->style == 0u) roto.dub = 70;                           /* (and more throws into it) */
     roto.swing = (uint8_t)(g->swing + rnd(2u));
     roto.grand = g->rnd;                                         /* (a little looseness: "organic, human") */
-    roto.evolve = 40;
+    roto.evolve = 0;                                             /* (a pattern changes only when you change it; GROOVE K4 turns it up) */
 
     /* 1: the kick, alone */
     k = &roto.trk[0];
