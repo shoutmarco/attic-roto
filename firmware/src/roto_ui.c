@@ -590,78 +590,191 @@ static void rt_draw_env(void)
 }
 
 /* ------------------------------------------------------------- filter
- * Seven rings in the track colour: BRIGHT spreads them out (dark: they huddle
- * in), DRIVE makes them wobble, EDGE grows a pink starburst in the middle, and
- * a dotted ring shows how far the envelope pushes the tone (out, or in when
- * negative). Along the bottom, the four with the sound's own names. */
-#define RT_FLT_N 7
+ * After the "lens" reference: white lines and green on black.
+ *   K1 BRIGHT  nested circles, all touching at one point on the right; they
+ *              spread out as the filter opens and huddle in as it closes
+ *   K2 EDGE    the green cone; more edge, a longer, narrower spike
+ *   K3 ENV     the small circle riding the big one: it runs round on each hit
+ *              (as far as the envelope takes the tone) and falls back
+ *   K4 DRIVE   the long lines through the focus; more drive, more and steeper
+ * Each control has a box with its letter on its line; turning it lights that
+ * line green, and its full name and value show along the bottom. */
+#define RT_F_CX   108          /* the big circle */
+#define RT_F_CY   122
+#define RT_F_R    86
+#define RT_F_PX   194          /* the focus: where the nested circles touch */
+#define RT_F_N    6
+#define RT_F_Y0   24           /* the scene's rows (lines are clipped to these) */
+#define RT_F_Y1   214
+#define RT_F_SR   9            /* the small circle */
+#define RT_FW     RT_RGB(176, 180, 176)
+#define RT_FDIM   RT_RGB(56, 60, 56)
+#define RT_FGRN   RT_RGB(44, 150, 110)
+#define RT_FHOT   RT_RGB(96, 236, 170)
 
-static void rt_wobble_ring(int32_t r, int32_t amp, int32_t phase, uint16_t c)
+static int32_t rt_isqrt(int32_t v)
 {
-    int32_t a, px = 0, py = 0, x, y;
-    if (!amp) { rt_circle(RT_CX, RT_CY, r, c); return; }
-    for (a = 0; a <= 1024; a += 8) {
-        int32_t rr = r + rt_round14(rt_sin(a * 9 + phase) * amp);
-        rt_polar(a, rr, &x, &y);
-        if (a) rt_line(px, py, x, y, c);
-        px = x; py = y;
+    int32_t r = 0, b = 1 << 14;
+    if (v <= 0) return 0;
+    while (b > v) b >>= 2;
+    while (b) {
+        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; }
+        else r >>= 1;
+        b >>= 2;
+    }
+    return r;
+}
+
+/* a value 0..100 (or the middle when the sound has none) */
+static int32_t rt_fv(uint32_t k, int32_t none)
+{
+    int32_t v = rt_sn.flt[k];
+    return v == -128 ? none : v;
+}
+
+/* the small circle's centre: at rest top left; a hit sends it round by the
+ * envelope amount, and it falls back over the next three steps */
+static void rt_flt_orb(int32_t *x, int32_t *y)
+{
+    int32_t a = -330, back = 0, k = rt_sn.flt[2];
+    uint32_t n = rt_sn.len ? rt_sn.len : 1u;
+    if (k != -128 && k) {
+        while (back < 3 && !rt_sn.on[(rt_sn.pos + n - (uint32_t)back) % n]) back++;
+        a += (k * 170 * (3 - back)) / 300;
+    }
+    *x = RT_F_CX + rt_round14(rt_cos(a) * (RT_F_R - RT_F_SR));
+    *y = RT_F_CY + rt_round14(rt_sin(a) * (RT_F_R - RT_F_SR));
+}
+
+/* a line clipped to the scene's rows */
+static void rt_fline(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
+{
+    int32_t a = rt_cy0, b = rt_cy1;
+    if (rt_cy0 < RT_F_Y0) rt_cy0 = RT_F_Y0;
+    if (rt_cy1 > RT_F_Y1) rt_cy1 = RT_F_Y1;
+    if (rt_cy1 > rt_cy0) rt_line(x0, y0, x1, y1, c);
+    rt_cy0 = a; rt_cy1 = b;
+}
+
+/* the letter box: outlined on black, or filled green while its knob turns */
+static void rt_fbox(int32_t x, int32_t y, char ch, uint16_t c, int hot)
+{
+    char t[2] = {ch, 0};
+    rt_rect(x - 5, y - 6, x + 6, y + 7, hot ? RT_FHOT : RT_BG);
+    if (!hot) {
+        rt_hspan(x - 5, x + 6, y - 6, c); rt_hspan(x - 5, x + 6, y + 6, c);
+        rt_rect(x - 5, y - 6, x - 4, y + 7, c); rt_rect(x + 5, y - 6, x + 6, y + 7, c);
+    }
+    rt_text_s(x - 2, y - 3, t, hot ? RT_BG : c);
+}
+
+/* the four letters: each name's first, or its next one if that is taken */
+static void rt_flt_letters(char out[4])
+{
+    uint32_t k, j, i;
+    for (k = 0; k < 4u; k++) {
+        const char *l = k == 2u ? "ENV" : rt_sn.flt_lbl[k];
+        out[k] = l[0] ? l[0] : (char)"BEED"[k];
+        for (i = 0; l[i]; i++) {
+            int taken = 0;
+            for (j = 0; j < k; j++) taken |= out[j] == l[i];
+            if (!taken && l[i] != ' ') { out[k] = l[i]; break; }
+        }
     }
 }
 
 static void rt_draw_flt(void)
 {
-    uint16_t col = RT_TRK_COL[rt_sn.sel], half = RT_TRK_HALF[rt_sn.sel];
-    int32_t b = rt_sn.flt[0] == -128 ? 50 : rt_sn.flt[0];
-    int32_t e = rt_sn.flt[1] == -128 ? 0 : rt_sn.flt[1];
-    int32_t d = rt_sn.flt[3] == -128 ? 0 : rt_sn.flt[3];
-    int32_t sp = 3 + (b * 7) / 100, amp = d ? (d * 6 + 99) / 100 : 0, i, outer = 14 + RT_FLT_N * sp;
+    int32_t b = rt_fv(0, 50), e = rt_fv(1, 0), d = rt_fv(3, 0);
+    int hot = rt_sn.show >= ROTO_SHOW_BRIGHT && rt_sn.show <= ROTO_SHOW_DRIVE ? (int)(rt_sn.show - ROTO_SHOW_BRIGHT) + 1 : 0;
+    int32_t sp = 4 + (b * 10) / 100, i, gr, gx, ax, L, n, spread;
+    int32_t kx[4], ky[4];
+    char let[4];
 
-    for (i = 1; i <= RT_FLT_N; i++)
-        rt_wobble_ring(14 + i * sp, amp, i * 90, (i & 1) || i == RT_FLT_N ? col : half);
-
-    if (rt_sn.flt[2] != -128 && rt_sn.flt[2]) {             /* where the envelope takes it */
-        int32_t r = outer + (rt_sn.flt[2] * 22) / 100, a, x, y;
-        if (r < 8) r = 8;
-        if (r > 94) r = 94;
-        for (a = 0; a < 1024; a += 16) {
-            rt_polar(a, r, &x, &y);
-            rt_px(x, y, RT_GREY);
+    /* K4: the long lines through just past the focus */
+    n = 2 + (d * 3 + 50) / 100;
+    spread = 24 + (d * 96) / 100;
+    for (i = 0; i < n; i++) {
+        int32_t a = 512 - spread + (2 * spread * i) / (n - 1), qx = RT_F_PX + 12;
+        int32_t c = rt_cos(a), s = rt_sin(a);
+        rt_fline(qx - rt_round14(c * 40), RT_F_CY - rt_round14(s * 40),
+                 qx + rt_round14(c * 260), RT_F_CY + rt_round14(s * 260),
+                 hot == 4 ? RT_FHOT : rt_sn.flt[3] == -128 ? RT_FDIM : RT_FW);
+        if (i == n - 1) {                       /* its box: on the top line at the left edge, kept below the header */
+            int32_t dist = ((qx - 14) << 14) / (c < -1 ? -c : 1), sy = -s;
+            if (sy > 0 && sy * dist > (RT_F_CY - 36) << 14) dist = ((RT_F_CY - 36) << 14) / sy;
+            kx[3] = qx + rt_round14(c * dist); ky[3] = RT_F_CY + rt_round14(s * dist);
         }
     }
 
-    if (!rt_sn.show) {                                      /* the starburst: EDGE */
-        int32_t n = 12, len = 3 + (e * 16) / 100, k, x0, y0, x1, y1;
-        for (k = 0; k < n; k++) {
-            int32_t a = (k * 1024) / n + 40;
-            rt_polar(a, 3, &x0, &y0);
-            rt_polar(a, 3 + len - (k & 1) * (len / 3), &x1, &y1);
-            rt_line(x0, y0, x1, y1, RT_PINK);
+    rt_circle(RT_F_CX, RT_F_CY, RT_F_R, RT_FW);
+
+    /* K1: the nested circles, all touching the focus; the fourth is the lens; the box at the bottom */
+    for (i = 0; i < RT_F_N; i++) {
+        int32_t r = 10 + i * sp;
+        rt_circle(RT_F_PX - r, RT_F_CY, r, hot == 1 ? RT_FHOT : i == 3 ? RT_FGRN : RT_FW);
+    }
+    { int32_t r = 10 + (RT_F_N - 1) * sp; kx[0] = RT_F_PX - r; ky[0] = RT_F_CY + r; }
+
+    /* K2: the cone from its tip, touching the lens top and bottom, on past it */
+    gr = 10 + 3 * sp; gx = RT_F_PX - gr;
+    L = gr + 16 + (e * (gx - 6 - gr - 16)) / 100;
+    ax = gx - L;
+    {
+        uint16_t c = hot == 2 ? RT_FHOT : rt_sn.flt[1] == -128 ? RT_FDIM : RT_FGRN;
+        int32_t tx = gx - (gr * gr) / L, ty = (gr * rt_isqrt(L * L - gr * gr)) / L, k;
+        for (k = -1; k <= 1; k += 2) {
+            int32_t ex = RT_F_PX + 20, ey = RT_F_CY + k * ((ty * (ex - ax)) / (tx - ax));
+            rt_fline(ax, RT_F_CY, ex, ey, c);
         }
-        rt_rect(RT_CX - 1, RT_CY - 1, RT_CX + 2, RT_CY + 2, RT_TEXT);
-    } else {
-        rt_rect(RT_CX - 34, RT_CY - 22, RT_CX + 35, RT_CY + 20, RT_BG);
-        rt_draw_centre();
+        rt_hspan(ax, gx, RT_F_CY, c);                       /* the axis to the cutoff ... */
+        rt_rect(gx, RT_F_CY - 4, gx + 1, RT_F_CY + 5, c);   /* ... and its tick */
+        kx[1] = ax; ky[1] = RT_F_CY;
     }
 
-    {                                                       /* the four, with the sound's own names */
+    /* K3: the small circle */
+    rt_flt_orb(&kx[2], &ky[2]);
+    rt_circle(kx[2], ky[2], RT_F_SR, hot == 3 ? RT_FHOT : rt_sn.flt[2] == -128 ? RT_FDIM : RT_FW);
+
+    rt_flt_letters(let);
+    for (i = 0; i < 4; i++)
+        rt_fbox(kx[i], ky[i], let[i], rt_sn.flt[i] == -128 ? RT_FDIM : i == 1 ? RT_FGRN : RT_FW, hot == i + 1);
+
+    if (hot) {                                              /* the full name and value, big */
+        char line[16];
+        uint32_t k = (uint32_t)hot - 1u, c, w = 0;
+        int32_t v = rt_sn.flt[k];
+        const char *l = v == -128 ? (k == 2u ? "NO ENV" : "NONE") : k == 2u ? "ENV" : rt_sn.flt_lbl[k];
+        for (c = 0; l[c] && c < 6u; c++) line[w++] = l[c];
+        if (v != -128) {
+            line[w++] = ' ';
+            if (k == 2u && v > 0) line[w++] = '+';
+            if (v < 0) { line[w++] = '-'; v = -v; }
+            rt_fmt_u(line + w, (uint32_t)v);
+            w = rt_strlen(line);
+            line[w++] = '%';
+        }
+        line[w] = 0;
+        rt_text_b(RT_CX - (int32_t)w * 4, RT_H - 20, line, 1, RT_FHOT);
+    } else {                                                /* the four, small */
         char line[48];
-        uint32_t k, n = 0;
+        uint32_t k, n2 = 0;
         for (k = 0; k < 4u; k++) {
             const char *l = k == 2u ? "ENV" : rt_sn.flt_lbl[k];
             int32_t v = rt_sn.flt[k];
             uint32_t c;
-            if (k) { line[n++] = ' '; line[n++] = ' '; }
-            for (c = 0; l[c] && c < 5u; c++) line[n++] = l[c];
-            line[n++] = ' ';
-            if (v == -128) { line[n++] = '-'; continue; }
-            if (k == 2u && v > 0) line[n++] = '+';
-            if (v < 0) { line[n++] = '-'; v = -v; }
-            line[n] = 0;
-            rt_fmt_u(line + n, (uint32_t)v);
-            n = rt_strlen(line);
+            if (k) { line[n2++] = ' '; line[n2++] = ' '; }
+            for (c = 0; l[c] && c < 5u; c++) line[n2++] = l[c];
+            line[n2++] = ' ';
+            if (v == -128) { line[n2++] = '-'; continue; }
+            if (k == 2u && v > 0) line[n2++] = '+';
+            if (v < 0) { line[n2++] = '-'; v = -v; }
+            line[n2] = 0;
+            rt_fmt_u(line + n2, (uint32_t)v);
+            n2 = rt_strlen(line);
         }
-        line[n] = 0;
-        rt_text_s(RT_CX - RT_TEXT_S_W(line) / 2, RT_H - 11, line, RT_GREY);
+        line[n2] = 0;
+        rt_text_s(RT_CX - RT_TEXT_S_W(line) / 2, RT_H - 15, line, RT_GREY);
     }
 }
 
@@ -774,6 +887,7 @@ static uint8_t roto_in_editor = 0;
 static uint8_t rt_shown = 0;               /* 0: nothing of ours on screen yet */
 static uint32_t rt_shown_head, rt_shown_ring;   /* what the header / the ring showed */
 static uint8_t rt_shown_pos, rt_shown_bpm, rt_shown_sel;
+static int32_t rt_orb_x, rt_orb_y;       /* where the filter's small circle was drawn */
 static uint8_t rt_show_what;                /* ROTO_SHOW_*: a knob's value in the centre ... */
 static uint32_t rt_show_until;              /* ... until this time (ms) */
 #define RT_SHOW_MS 900u
@@ -857,6 +971,15 @@ int roto_ui_draw(int force, uint32_t now_ms)
             rt_playhead_box(rt_sn.pos, rt_sn.len, &x0, &y0, &x1, &y1);
             rt_repaint(x0, y0, x1, y1);
         }
+    }
+    if (rt_sn.view == ROTO_VIEW_FLT) {                  /* the small circle on the filter screen */
+        int32_t ox, oy;
+        rt_flt_orb(&ox, &oy);
+        if (rt_shown && ring == rt_shown_ring && (ox != rt_orb_x || oy != rt_orb_y)) {
+            rt_repaint(rt_orb_x - RT_F_SR - 2, rt_orb_y - RT_F_SR - 2, rt_orb_x + RT_F_SR + 3, rt_orb_y + RT_F_SR + 3);
+            rt_repaint(ox - RT_F_SR - 2, oy - RT_F_SR - 2, ox + RT_F_SR + 3, oy + RT_F_SR + 3);
+        }
+        rt_orb_x = ox; rt_orb_y = oy;
     }
     rt_shown = 1;
     rt_shown_head = head;
