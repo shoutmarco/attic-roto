@@ -1314,33 +1314,46 @@ static void rt_playhead_box(uint32_t pos, uint32_t n, int32_t *x0, int32_t *y0, 
 }
 
 /* ------------------------------------------------------------- splash
- * The power-on screen: six rings in the rings' colours, each with a few hits spread
- * evenly round it (as EUCLID spreads them), and the name big in the middle. */
+ * The power-on screen, in the filter screen's lens: the big circle, the nested
+ * circles touching at the focus, the green cone, the long lines through it, the
+ * small circle riding the top; the name big underneath. */
 void roto_ui_splash(void)
 {
-    static const uint8_t HITS[ROTO_TRACKS] = {4, 3, 5, 2, 7, 1};
-    int32_t i, x, y;
-    uint32_t s, n;
+    enum { CX = 110, CY = 96, R = 82, PX = 190, Y1 = 184 };
+    int32_t i, x, y, sp = 11, gr, gx, ax, L, n = 4, spread = 77;
+    uint32_t s;
     rt_clip_all();
     rt_rect(0, 0, RT_W, RT_H, RT_BG);
-    for (i = 0; i < ROTO_TRACKS; i++) {
-        int32_t r = 102 - i * 9;
-        rt_circle(RT_CX, 112, r, RT_TRK_HALF[i]);
-        n = HITS[i];
-        for (s = 0; s < n; s++) {
-            int32_t a = (int32_t)((s * 1024u) / n) - 256 + i * 37;
-            x = RT_CX + rt_round14(rt_cos(a) * r);
-            y = 112 + rt_round14(rt_sin(a) * r);
-            rt_diamond_fill(x, y, 3, RT_TRK_COL[i]);
-        }
+    rt_cy1 = Y1;                                            /* (the drawing stops above the name) */
+    for (i = 0; i < n; i++) {                               /* the long lines through just past the focus */
+        int32_t a = 512 - spread + (2 * spread * i) / (n - 1), qx = PX + 12, c = rt_cos(a), sn = rt_sin(a);
+        rt_line(qx - rt_round14(c * 40), CY - rt_round14(sn * 40), qx + rt_round14(c * 260), CY + rt_round14(sn * 260), RT_FW);
     }
-    rt_text_b(RT_CX - 5 * 8, 112 - 26, "ATTIC", 2, RT_TEXT);
-    rt_text_b(RT_CX - 4 * 8, 112 + 2, "ROTO", 2, RT_TEXT);
+    rt_circle(CX, CY, R, RT_FW);
+    for (i = 0; i < 6; i++)                                 /* the nested circles; the fourth is the lens */
+        rt_circle(PX - (10 + i * sp), CY, 10 + i * sp, i == 3 ? RT_FGRN : RT_FW);
+    gr = 10 + 3 * sp; gx = PX - gr;
+    L = gr + 16 + (55 * (gx - 6 - gr - 16)) / 100;
+    ax = gx - L;
+    {                                                       /* the cone */
+        int32_t tx = gx - (gr * gr) / L, ty = (gr * rt_isqrt(L * L - gr * gr)) / L, k;
+        for (k = -1; k <= 1; k += 2) {
+            int32_t ex = PX + 20, ey = CY + k * ((ty * (ex - ax)) / (tx - ax));
+            rt_line(ax, CY, ex, ey, RT_FGRN);
+        }
+        rt_hspan(ax, gx, CY, RT_FGRN);
+        rt_rect(gx, CY - 4, gx + 1, CY + 5, RT_FGRN);
+    }
+    x = CX + rt_round14(rt_cos(-330) * (R - 9));            /* the small circle */
+    y = CY + rt_round14(rt_sin(-330) * (R - 9));
+    rt_circle(x, y, 9, RT_FHOT);
+    rt_clip_all();
+    rt_text_b(RT_CX - 10 * 8, 194, "ATTIC ROTO", 2, RT_FW);
     {
         char v[12];                                          /* (the small font is capitals only) */
         for (s = 0; s < 11u && ROTO_VERSION[s]; s++) v[s] = (char)(ROTO_VERSION[s] >= 'a' && ROTO_VERSION[s] <= 'z' ? ROTO_VERSION[s] - 32 : ROTO_VERSION[s]);
         v[s] = 0;
-        rt_text_s(RT_CX - RT_TEXT_S_W(v) / 2, 226, v, RT_GREY);
+        rt_text_s(RT_CX - RT_TEXT_S_W(v) / 2, 228, v, RT_FGRN);
     }
 }
 
