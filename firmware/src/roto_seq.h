@@ -232,6 +232,7 @@ int  roto_ui_draw(int force, uint32_t now_ms);   /* returns 1 if the screen is o
 void roto_ui_show(uint32_t what, uint32_t now_ms);   /* a knob turned: show its value in the centre for a moment */
 void roto_ui_audio_level(uint8_t level);
 void roto_ui_splash(void);                       /* the power-on screen */
+int roto_ui_splash_frame(int32_t prev, int32_t t);   /* the logo raining in, t ms on (prev: the last frame's t, or -1); 1: done */
 uint32_t roto_key_leds(void);                    /* the keys lit: the ring's steps, the playhead's key flipped (bit k: key k of 27) */
 
 #endif /* ROTO_SEQ_H */

@@ -257,7 +257,6 @@ void roto_apply_sounds(void)
 
 static void fm1_main(void)
 {
-    uint32_t ms;
 #if FELUCCA_CPU2
     uint8_t c1_told = 0;                                /* 2ND CORE MISREAD shown (and ON cleared) */
 #endif
@@ -314,9 +313,21 @@ static void fm1_main(void)
         settings_save();
     }
     autosave_boot(boot_clean);                /* (1.2) the last session's music, under the splash */
-    for (ms = 0; ms < 400u; ms += 10u) {      /* the splash; the pot followed (MIDI IN plays under it) */
-        fm1_delay_ms(10);
-        master_poll();
+    {                                         /* the splash: attic rain's logo rains in (roto_ui.c), about 2 s and a
+                                                 moment to stand; the pot followed (MIDI IN plays under it) */
+        uint32_t t0 = fm1_ms, done_at = 0;
+        int32_t last = -1;
+        for (;;) {
+            int32_t t = (int32_t)(fm1_ms - t0);
+            if (t - last >= 30) {
+                if (roto_ui_splash_frame(last, t) && !done_at) done_at = fm1_ms;
+                lcd_sync();
+                last = t;
+            }
+            if (done_at && fm1_ms - done_at >= 500u) break;
+            fm1_delay_ms(5);
+            master_poll();
+        }
     }
     roto_boot();                              /* attic-roto: a new pattern and its sounds, playing */
     kb_boot_hold = 0;

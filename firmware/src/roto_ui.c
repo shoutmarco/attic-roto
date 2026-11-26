@@ -1600,47 +1600,113 @@ static void rt_playhead_box(uint32_t pos, uint32_t n, int32_t *x0, int32_t *y0, 
 }
 
 /* ------------------------------------------------------------- splash
- * The power-on screen, in the filter screen's lens: the big circle, the nested
- * circles touching at the focus, the green cone, the long lines through it, the
- * small circle riding the top; the name big underneath. */
-void roto_ui_splash(void)
+ * The power-on screen: attic rain's logo, rained in. Drops fall down each column and
+ * the letters build up from the bottom where they land, "attic" first, then "rain";
+ * then the logo stands. Everything is worked out from the time since it began
+ * (roto_ui_splash_frame), so a slow frame only skips ahead: it ends on time. */
+#include "rain_logo.h"
+#define RR_OX     11                       /* the logo: 121 x 73 cells at 9/5 px each, centred */
+#define RR_OY     48
+#define RR_K      24                       /* ms between cells landing in a column (it fills upward) */
+#define RR_STAG   300                      /* the columns start within this many ms of each other */
+#define RR_PHASE  900                      /* "rain" starts this many ms after "attic" */
+#define RR_V      6                        /* a drop falls RR_V px every 10 ms */
+#define RR_DROP   6                        /* a drop's length (px) */
+#define RR_WHITE  RT_RGB(240, 240, 240)
+#define RR_DRIP   RT_RGB(150, 170, 200)
+#define RR_END    (RR_PHASE + RR_STAG + 40 * RR_K)
+
+static int32_t rr_x(uint32_t c) { return RR_OX + (int32_t)(c * 9u) / 5; }
+static int32_t rr_y(uint32_t r) { return RR_OY + (int32_t)(r * 9u) / 5; }
+static int32_t rr_start(uint32_t c, uint32_t p)
 {
-    enum { CX = 110, CY = 96, R = 82, PX = 190, Y1 = 184 };
-    int32_t i, x, y, sp = 11, gr, gx, ax, L, n = 4, spread = 77;
-    uint32_t s;
+    uint32_t h = (c + 131u * p + 7u) * 2654435761u;
+    return (int32_t)(p * RR_PHASE + (h >> 16) % RR_STAG);
+}
+static int32_t rr_land(uint32_t c, uint32_t r)       /* when cell (c, r) lands */
+{
+    uint32_t p = r >= RR_SPLIT;
+    return rr_start(c, p) + (int32_t)(RR_BOT[p][c] - r) * RR_K;
+}
+static int rr_cell(uint32_t c, uint32_t r)           /* (c, r) is part of the logo */
+{
+    uint32_t i;
+    if (r >= RR_ROWS) return 0;
+    for (i = RR_ROW0[r]; i < RR_ROW0[r + 1u]; i++)
+        if (c >= RR_RUN[i][0] && c < (uint32_t)RR_RUN[i][0] + RR_RUN[i][1]) return 1;
+    return 0;
+}
+static void rr_fill(uint32_t c, uint32_t r, uint16_t col) { rt_rect(rr_x(c), rr_y(r), rr_x(c + 1u), rr_y(r + 1u), col); }
+
+/* a drop's bottom at time t, for the drop landing on (c, r) at time T (every second cell has one); 0: not in the air */
+static int32_t rr_drop_y(uint32_t c, uint32_t r, int32_t t)
+{
+    int32_t T = rr_land(c, r), y = rr_y(r) - ((T - t) * RR_V) / 10;
+    return t < T && y > RR_DROP ? y : 0;
+}
+
+/* what a column shows at time t over rows y0..y1: the landed cells white, black elsewhere */
+static void rr_restore(uint32_t c, int32_t y0, int32_t y1, int32_t t)
+{
+    int32_t y, run = y0;
+    uint16_t was = 0;
+    for (y = y0; y <= y1; y++) {                      /* (a fill per stretch of one colour) */
+        uint16_t now = 0;
+        if (y < y1 && y >= RR_OY) {
+            uint32_t r = (uint32_t)(5 * (y - RR_OY) + 4) / 9u;   /* the row whose cell covers y: rr_y(r) <= y < rr_y(r + 1) */
+            now = r < RR_ROWS && rr_cell(c, r) && rr_land(c, r) <= t ? RR_WHITE : RT_BG;
+        } else if (y < y1) now = RT_BG;
+        if (y > y0 && (y == y1 || now != was)) { rt_rect(rr_x(c), run, rr_x(c) + 1, y, was); run = y; }
+        was = now;
+    }
+}
+
+static void rr_drops(int32_t t, int erase, int32_t now)
+{
+    uint32_t c, p;
+    for (c = 0; c < RR_COLS; c++)
+        for (p = 0; p < 2u; p++) {
+            int32_t r;
+            if (RR_TOP[p][c] == 255u) continue;
+            for (r = RR_BOT[p][c]; r >= RR_TOP[p][c]; r -= 2) {
+                int32_t y = rr_drop_y(c, (uint32_t)r, t);
+                if (!y) continue;
+                if (erase) rr_restore(c, y - RR_DROP, y, now);
+                else rt_rect(rr_x(c), y - RR_DROP, rr_x(c) + 1, y, RR_DRIP);
+            }
+        }
+}
+
+void roto_ui_splash(void)                          /* the first frame: black (lcd_init) */
+{
     rt_clip_all();
     rt_rect(0, 0, RT_W, RT_H, RT_BG);
-    rt_cy1 = Y1;                                            /* (the drawing stops above the name) */
-    for (i = 0; i < n; i++) {                               /* the long lines through just past the focus */
-        int32_t a = 512 - spread + (2 * spread * i) / (n - 1), qx = PX + 12, c = rt_cos(a), sn = rt_sin(a);
-        rt_line(qx - rt_round14(c * 40), CY - rt_round14(sn * 40), qx + rt_round14(c * 260), CY + rt_round14(sn * 260), RT_FW);
-    }
-    rt_circle(CX, CY, R, RT_FW);
-    for (i = 0; i < 6; i++)                                 /* the nested circles; the fourth is the lens */
-        rt_circle(PX - (10 + i * sp), CY, 10 + i * sp, i == 3 ? RT_FGRN : RT_FW);
-    gr = 10 + 3 * sp; gx = PX - gr;
-    L = gr + 16 + (55 * (gx - 6 - gr - 16)) / 100;
-    ax = gx - L;
-    {                                                       /* the cone */
-        int32_t tx = gx - (gr * gr) / L, ty = (gr * rt_isqrt(L * L - gr * gr)) / L, k;
-        for (k = -1; k <= 1; k += 2) {
-            int32_t ex = PX + 20, ey = CY + k * ((ty * (ex - ax)) / (tx - ax));
-            rt_line(ax, CY, ex, ey, RT_FGRN);
-        }
-        rt_hspan(ax, gx, CY, RT_FGRN);
-        rt_rect(gx, CY - 4, gx + 1, CY + 5, RT_FGRN);
-    }
-    x = CX + rt_round14(rt_cos(-330) * (R - 9));            /* the small circle */
-    y = CY + rt_round14(rt_sin(-330) * (R - 9));
-    rt_circle(x, y, 9, RT_FHOT);
+}
+
+/* the frame for t ms since it began, the last one drawn at prev (or -1); 1 when it has all landed */
+int roto_ui_splash_frame(int32_t prev, int32_t t)
+{
+    uint32_t r, i, c;
     rt_clip_all();
-    rt_text_b(RT_CX - 10 * 8, 194, "ATTIC ROTO", 2, RT_FW);
+    if (prev >= 0) rr_drops(prev, 1, t);             /* the drops where they were: gone (what is under them back) */
+    for (r = 0; r < RR_ROWS; r++)                      /* the cells landed since */
+        for (i = RR_ROW0[r]; i < RR_ROW0[r + 1u]; i++)
+            for (c = RR_RUN[i][0]; c < (uint32_t)RR_RUN[i][0] + RR_RUN[i][1]; c++) {
+                int32_t l = rr_land(c, r);
+                if (l <= t && l > prev) rr_fill(c, r, RR_WHITE);
+            }
+    if (t < RR_END) { rr_drops(t, 0, t); return 0; }
+    for (r = 0; r < RR_ROWS; r++)                      /* (at the end: the whole logo, and the version under it) */
+        for (i = RR_ROW0[r]; i < RR_ROW0[r + 1u]; i++)
+            rt_rect(rr_x(RR_RUN[i][0]), rr_y(r), rr_x((uint32_t)RR_RUN[i][0] + RR_RUN[i][1]), rr_y(r + 1u), RR_WHITE);
     {
-        char v[12];                                          /* (the small font is capitals only) */
+        char v[12];
+        uint32_t s;
         for (s = 0; s < 11u && ROTO_VERSION[s]; s++) v[s] = (char)(ROTO_VERSION[s] >= 'a' && ROTO_VERSION[s] <= 'z' ? ROTO_VERSION[s] - 32 : ROTO_VERSION[s]);
         v[s] = 0;
-        rt_text_s(RT_CX - RT_TEXT_S_W(v) / 2, 228, v, RT_FGRN);
+        rt_text_s(RT_CX - RT_TEXT_S_W(v) / 2, 214, v, RT_RGB(110, 110, 110));
     }
+    return 1;
 }
 
 /* ------------------------------------------------------------- state */
