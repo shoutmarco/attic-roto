@@ -71,7 +71,7 @@ static void put(roto_track_t *k, uint32_t s, uint32_t note, uint32_t vel)
  * kit are out). Levels (P_LEVEL: 112 = 0 dB, 0.5 dB a step) from the same renders: drums
  * loudest, bass about 3 dB under, chords and blips further back. */
 static const uint8_t SND_DRUMS[][3] = {{10, 0, 113}, {10, 1, 113}, {10, 3, 113}};                 /* DRUM KIT, DEEP KIT, PERC KIT */
-static const uint8_t SND_BASS[][3]  = {{0, 7, 111}};                                              /* SUB BASS (clean and round, up front) */
+static const uint8_t SND_BASS[][3]  = {{0, 7, 111}, {0, 2, 118}};                                /* SUB BASS, SQR BASS (Juno-like; round, up front) */
 static const uint8_t SND_STAB[][3]  = {{12, 0, 100}, {0, 3, 101}};                               /* TINE EP, PWM STR (soft, held) */
 static const uint8_t SND_BLIP[][3]  = {{0, 5, 100}, {7, 3, 108}};                               /* SINE KEY, SOFT FLUTE (the soft ones, set back) */
 #define NSND(a) ((uint32_t)(sizeof a / sizeof a[0]))
@@ -96,28 +96,30 @@ static void home_save(roto_track_t *k)
     for (s = 0; s < ROTO_STEPS; s++) k->home[s] = k->step[s];
 }
 
-/* the grooves: written by hand, minimal and swung (after Baby Ford / Soul Capsule).
- * 16 steps of 1/16 each, one bar (the chords: 16 of 1/8, two bars). A power-on picks
- * one, a key, and a few small touches; EVOLVE only makes small touches too.
+/* the grooves: written by hand, after Andrew Weatherall's "drug-chug" (his club night: "never
+ * knowingly exceeding 120 BPMs", mostly 100-115; "spacy dubby disco"): a lazy, strolling bass
+ * that pauses, claps on 2 and 4, toms, cowbell and congas, a dub stab thrown into the echo.
+ * 16 steps of 1/16 each, one bar (the chords: 16 of 1/8, two bars). A power-on picks one, a
+ * key and a few small touches; EVOLVE only makes small touches too.
  *   drums  K kick  O open hat  o soft open hat
- *   shuf   h closed hat (a ghost)  s shaker (a ghost)  c clap  r rim
- *   perc   L low conga  M conga  m muted conga  b bongo  k clave  w woodblock
+ *   shuf   h closed hat (a ghost)  s shaker (a ghost)  c clap  n snare  r rim
+ *   perc   L low conga  M conga  m muted conga  b bongo  k clave  w woodblock  T low tom  t tom  B cowbell
  *   bass   1..7 the mode's degrees, 8 the root an octave up
  *   chord  a the home chord  b another (both minor 7ths in the mode) */
 typedef struct {
     const char *drums, *shuf, *perc, *bass, *chord, *chord_alt;
-    uint8_t swing, bgate;
+    uint8_t swing, bgate, cgate, bpm;
 } roto_groove_t;
 
 static const roto_groove_t GROOVES[] = {
-    {"K.O.K.O.K.O.K.O.", ".h.hch.h.h.hch.h", "...m..L....m.L..", "..1...15..1..8.7", "...a............", "......a.........", 57, 55},
-    {"K.o.K.O.K.o.K.O.", ".hrh.h.h.hrh.hsh", "..k.....k..k....", "...1..1...5..1..", "..........a.....", ".....a..........", 56, 45},
-    {"K.O.K.O.K.O.K.Oo", ".h.h.h.h.h.h.h.h", "......L.....M...", "..1....1..1..5.8", "a.......b.......", "..a.......b.....", 55, 70},
-    {"K.O.K.O.K.O.K.O.", ".s.sc..s.s.sc.ss", "m..L.m.....L.m..", "..1..1....1..7..", ".....a..........", ".............a..", 58, 45},
-    {"K...K.O.K...K.O.", ".h.r.h.h.h.r.h.h", "................", "..1..1.1..1...5.", "...a.......a....", "......a.........", 57, 50},
-    {"K.O.K.O.K.O.K.O.", "...hc..h...hc..h", "..b...b...b..b..", ".118.1.5.118.1.5", "........a.......", "a...............", 56, 35},
-    {"K.O.K.OoK.O.K.O.", ".h.h.h.h.h.h.hrh", "....L.......L...", "...1...1..7...1.", "..a.............", "..........a.....", 58, 60},
-    {"K.O.K.O.K.O.K.O.", ".s.s.s.s.s.s.s.s", "w.....w.....w...", "..1..5...1.5..8.", "....a...........", "............a...", 55, 55},
+    /* drug chug */        {"K.O.K.O.K.O.K.O.", ".h.hc..h.h.hc..h", "......T.......t.", "..1..18...1..1.7", "...a............", ".......a........", 55, 45, 25, 108},
+    /* Sabres dub, 808 */  {"K..OK.O.K..OK.O.", ".h.hn..h.h.hn..h", "m.....L...m...L.", "1..1..5...1.8...", "....a...........", "............a...", 54, 60, 25, 112},
+    /* lazy stroll */      {"K.O.K.O.K.O.K.O.", ".s.sc..s.s.sc..s", "...L.......M....", "..1..3.5.....5.3", "..a.......a.....", "......a.........", 57, 55, 30, 104},
+    /* spacy disco */      {"K.O.K.O.K.O.K.Oo", ".hhhc.hh.hhhc.hh", "..B.......B.....", "..8..18...8..18.", "a...............", "......a.........", 55, 35, 90, 114},
+    /* post-punk */        {"K.O.K.O.K.O.K.O.", ".h.hn..h.h.hn..h", "......t.......T.", "..5..87...5..3..", "........a.......", "..a.............", 54, 50, 25, 110},
+    /* dub of a dub */     {"K...K.O.K...K.O.", "...hc..h...hc..h", "w.......w..w....", "..1....1..1...5.", "...a.......b....", ".....a..........", 56, 70, 25, 106},
+    /* rockabilly chug */  {"K.O.K.O.K.O.K.O.", "h.h.c.h.h.h.c.h.", "...m...m...m...m", "..1..1.1..5..5.8", ".....a..........", "..........a.....", 56, 40, 25, 108},
+    /* acid echo */        {"K.O.K.O.K.O.K.O.", ".s.s.s.s.s.s.s.s", "..L.......L.....", "..1...17...1..8.", "a.......b.......", "....a.......b...", 55, 50, 90, 112},
 };
 #define NGROOVE ((uint32_t)(sizeof GROOVES / sizeof GROOVES[0]))
 
@@ -131,7 +133,11 @@ static uint32_t groove_drum(char c, uint32_t *vel, uint32_t *ghost)
     case 'o': *vel = 38u + rnd(10u); return 46;
     case 'h': *vel = 28u + rnd(16u); *ghost = 55u + rnd(36u); return 42;
     case 's': *vel = 30u + rnd(14u); *ghost = 60u + rnd(31u); return 70;
-    case 'c': *vel = 50u + rnd(12u); return 39;
+    case 'c': *vel = 58u + rnd(14u); return 39;
+    case 'n': *vel = 42u + rnd(12u); return 38;
+    case 'T': *vel = 56u + rnd(14u); return 45;
+    case 't': *vel = 50u + rnd(14u); return 48;
+    case 'B': *vel = 40u + rnd(12u); return 56;
     case 'r': *vel = 44u + rnd(14u); return 37;
     case 'L': *vel = 62u + rnd(12u); return 64;
     case 'M': *vel = 54u + rnd(12u); return 63;
@@ -177,11 +183,11 @@ void roto_seq_generate(uint32_t seed)
     roto.root = (uint8_t)pc;
     roto.mode = (uint8_t)rnd(3u);
     sc = MODE_SC[roto.mode];
-    roto.bpm = 122;                                              /* (Soul Capsule's tempo) */
-    roto.dtime = 10;                                             /* params.c N_DTIME: 1/8D */
-    roto.dfdbk = (uint8_t)(55u + rnd(12u));                     /* a dubby tail */
+    roto.bpm = (uint8_t)(g->bpm - 1u + rnd(3u));               /* (the chug: 100-115) */
+    roto.dtime = chance(75) ? 10u : 12u;                         /* params.c N_DTIME: 1/8D, now and then 1/4D */
+    roto.dfdbk = (uint8_t)(58u + rnd(13u));                     /* "a world of echo": a long dub tail */
     roto.swing = (uint8_t)(g->swing + rnd(2u));
-    roto.evolve = 40;
+    roto.evolve = 50;
 
     /* 1: kick and open hats; now and then one open hat closes */
     k = &roto.trk[0];
@@ -225,11 +231,13 @@ void roto_seq_generate(uint32_t seed)
                 break;
             }
     }
-    sound(&roto.snd[1], SND_BASS[0], 0, 0, 0, 0);               /* SUB BASS: round and clean */
+    sound(&roto.snd[1], SND_BASS[rnd(NSND(SND_BASS))], 0, 0, 0, 0);   /* SUB, or the Juno-like square */
+    k->lag = 14;                                                 /* "a bit lazier": just behind the beat */
 
     /* 3: the dub chord, a two-bar loop; held, low, into the delay */
     k = &roto.trk[2];
-    k->len = 16; k->div = 2; k->gate = 90;
+    k->len = 16; k->div = 2; k->gate = g->cgate;               /* (a stab into the echo, or held) */
+    k->lag = 6;
     k->chord[0] = 3; k->chord[1] = 7; k->chord[2] = 10;
     k->fill_note = (uint8_t)(48u + pc);
     {
@@ -322,9 +330,11 @@ static uint32_t audio_dice(uint32_t n)
     return x % n;
 }
 
-static void fire(uint32_t t, roto_track_t *k, uint32_t step_len)
+static uint32_t roto_sr = 44100u;           /* (the tick's sample rate, for the lag) */
+
+static void fire_now(uint32_t t, roto_track_t *k, uint32_t step_len, uint32_t pos)
 {
-    const roto_step_t *st = &k->step[k->pos];
+    const roto_step_t *st = &k->step[pos < ROTO_STEPS ? pos : 0u];
     uint32_t i, g;
     if (k->nheld) release(t, k);
     if (!st->on) return;
@@ -340,6 +350,17 @@ static void fire(uint32_t t, roto_track_t *k, uint32_t step_len)
     }
     g = (step_len * (k->gate ? k->gate : 50u)) / 100u;
     k->gate_left = g ? g : 1u;
+}
+
+/* a step starts: now, or (a lazy ring) a few ms behind the beat */
+static void fire(uint32_t t, roto_track_t *k, uint32_t step_len)
+{
+    uint32_t d = k->lag ? (roto_sr * k->lag) / 1000u : 0u;
+    if (k->nheld) release(t, k);
+    if (!d) { fire_now(t, k, step_len, k->pos); return; }
+    k->lag_step = k->pos;
+    k->lag_len = step_len > d ? step_len - d : 1u;
+    k->lag_left = d;
 }
 
 /* -------- EVOLVE: every 4 bars, maybe one small change; sometimes back home */
@@ -454,7 +475,7 @@ static void throw_bar(void)
     if (roto.throw_trk < ROTO_PARTS) {
         return;                                              /* (one at a time) */
     }
-    if (ev_dice(100u) < (uint32_t)roto.evolve / 6u) {        /* evolve 50: a throw in about 1 bar of 12 */
+    if (ev_dice(100u) < (uint32_t)roto.evolve / 4u) {        /* evolve 50: a throw in about 1 bar of 8 (fired off now and then) */
         uint32_t t = 2u + ev_dice(2u);
         uint32_t d = (uint32_t)roto.snd[t].dly + 50u, fb = (uint32_t)roto.dfdbk + 16u;
         roto.throw_trk = (uint8_t)t;
@@ -545,11 +566,14 @@ static void sixteenth(uint32_t six)
 
 void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
 {
+    roto_sr = sample_rate ? sample_rate : 44100u;
     uint32_t t, f, six, sw, len16;
 
     if (!roto.running) {
-        for (t = 0; t < ROTO_TRACKS; t++)
+        for (t = 0; t < ROTO_TRACKS; t++) {
+            roto.trk[t].lag_left = 0;
             if (roto.trk[t].nheld) release(t, &roto.trk[t]);
+        }
         if (roto.throw_trk < ROTO_PARTS) { roto.throw_left = 1; throw_tick(); }
         rarp_off();
         return;
@@ -570,6 +594,7 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
         for (t = 0; t < ROTO_TRACKS; t++) {
             roto_track_t *k = &roto.trk[t];
             if (k->gate_left && --k->gate_left == 0u) release(t, k);
+            if (k->lag_left && --k->lag_left == 0u) fire_now(t, k, k->lag_len, k->lag_step);
         }
         if (roto.arp_gate_left && --roto.arp_gate_left == 0u) rarp_off();
         if (++roto.acc16 == len16 / 2u) rarp_32(six);        /* (the off 1/32) */

@@ -43,6 +43,10 @@ typedef struct {
     uint8_t  fill_at[8];
     uint8_t  rot;        /* how far ROTATE has turned the pattern (0..len-1, for display) */
     uint8_t  prob;       /* PROB: the chance each hit plays, percent (100 = always) */
+    uint8_t  lag;        /* ms each hit plays behind the beat (0: on it): the lazy feel */
+    uint8_t  lag_step;   /* audio side: the step waiting out its lag ... */
+    uint32_t lag_left;   /* ... samples to go (0: none) */
+    uint32_t lag_len;    /* ... and its length */
     roto_step_t home[ROTO_STEPS];   /* the pattern as set (generator or your edits): EVOLVE drifts away and back to it */
 } roto_track_t;
 
