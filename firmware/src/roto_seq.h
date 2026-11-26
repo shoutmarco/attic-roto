@@ -97,6 +97,7 @@ typedef struct {
     int8_t   ed[8];      /* SHAPE: the sound's eight settings 0..100 (-128: none), for the screen (ui_input.c fills it) */
     char     ed_lbl[8][6];   /* their names */
     char     ed_txt[8][7];   /* their values as text ("64%", "SAW") */
+    uint8_t  mute;       /* bit r: ring r muted (OP1..OP6, the first six black keys) */
     uint8_t  kpage;      /* the step keys show steps 1-16 (0) or 17-32 (1): OCT- / OCT+ */
     uint8_t  saves_used; /* SAVE: bit n, save n holds a groove (main.c reads them at power-on) */
     char     save_name[8][9];   /* their names */

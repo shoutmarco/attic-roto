@@ -1859,7 +1859,7 @@ static void ui_input(void)
                 if (roto.view != ROTO_VIEW_RING && roto.view != ROTO_VIEW_EUCLID) roto.view = ROTO_VIEW_RING;
                 roto_ui_show(ROTO_SHOW_GNUM, fm1_ms);
             } else if (gn_t && fm1_ms - gn_t >= 450u) {
-                uint32_t t0 = fm1_ms, t, view = roto.view, sel2b = roto.sel, n = roto.gnum;
+                uint32_t t0 = fm1_ms, t, view = roto.view, sel2b = roto.sel, n = roto.gnum, mute = roto.mute;
                 int busy = 1;
                 gn_t = 0;
                 roto_stop();                                  /* (the audio side lets go of its notes, up to 0.1 s) */
@@ -1876,6 +1876,7 @@ static void ui_input(void)
                 }
                 roto.view = (uint8_t)view;
                 roto.sel = (uint8_t)sel2b;
+                roto.mute = (uint8_t)mute;                    /* (the mutes stay as they were) */
                 roto.gnum = (uint16_t)n;
                 roto_play();
                 roto_ui_show(ROTO_SHOW_GNUM, fm1_ms);

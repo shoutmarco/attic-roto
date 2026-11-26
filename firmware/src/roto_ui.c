@@ -268,7 +268,7 @@ static struct {
     uint8_t ghost[ROTO_STEPS];
     uint8_t g_swing, g_evolve, g_dub, g_rand, g_prob;
     uint16_t gnum;
-    uint8_t naming, name_pos, save_cur;
+    uint8_t naming, name_pos, save_cur, mute;
     uint8_t a_mode, a_rate, a_range, a_len, a_n, a_idx;
     uint8_t a_notes[16];
     int8_t o_pitch, o_bright;
@@ -317,6 +317,7 @@ static void rt_snapshot(void)
         rt_sn.o_len = k->gate;
         rt_sn.o_level = roto.snd[rt_sn.part].level <= 127u ? roto.snd[rt_sn.part].level : 127u;
     }
+    rt_sn.mute = roto.mute;
     rt_sn.naming = roto.naming; rt_sn.name_pos = roto.name_pos < 8u ? roto.name_pos : 0u;
     rt_sn.save_cur = roto.save_cur;
     {
@@ -394,7 +395,7 @@ static void rt_draw_header(void)
 
     for (t = 0; t < ROTO_TRACKS; t++) {
         int32_t bx = RT_BOX_X + t * RT_BOX_W;
-        uint16_t tc = RT_TRK_COL[t];
+        uint16_t tc = (rt_sn.mute >> t) & 1u ? RT_TRK_RING[t] : RT_TRK_COL[t];   /* (muted: faint) */
         char d[2] = {(char)('1' + t), 0};
         if (t == (int32_t)rt_sn.sel) {
             rt_rect(bx, 5, bx + 8, 16, tc);
@@ -1654,6 +1655,7 @@ static uint32_t rt_head_sig(void)
     h = rt_fnv(h, rt_sn.div);
     h = rt_fnv(h, rt_sn.view);
     if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.hits); h = rt_fnv(h, rt_sn.len); }
+    h = rt_fnv(h, rt_sn.mute);
     if (rt_sn.view == ROTO_VIEW_ARP) h = rt_fnv(h, rt_sn.a_mode != 0u);
     if (rt_sn.view == ROTO_VIEW_SND) h = rt_fnv(h, rt_sn.spage);
     for (s = 0; s < sizeof roto.snd[0].name && roto.snd[rt_sn.part].name[s]; s++)
@@ -1787,7 +1789,13 @@ int roto_ui_input(uint32_t pressed, uint32_t notes)
         uint32_t k, sel = (uint32_t)roto.sel, len = roto.trk[sel].len, base = roto.kpage ? 16u : 0u;
         for (k = 0; k < 27u; k++) {
             uint32_t s;
-            if (!((notes >> k) & 1u) || rt_key_black(k)) continue;
+            if (!((notes >> k) & 1u)) continue;
+            if (rt_key_black(k)) {                           /* OP1..OP6: the first six black keys mute rings 1..6 */
+                uint32_t p = 0, j;
+                for (j = 0; j < k; j++) p += (uint32_t)rt_key_black(j);
+                if (p < ROTO_TRACKS) roto.mute ^= (uint8_t)(1u << p);
+                continue;
+            }
             s = base + rt_white_place(k);
             if (s < len) roto_step_toggle(sel, s);
         }
@@ -1798,11 +1806,15 @@ int roto_ui_input(uint32_t pressed, uint32_t notes)
 uint32_t roto_key_leds(void)
 {
     const roto_track_t *k = &roto.trk[roto.sel < ROTO_TRACKS ? roto.sel : 0];
-    uint32_t key, m = 0, base = roto.kpage ? 16u : 0u, len = k->len;
+    uint32_t key, bp, m = 0, base = roto.kpage ? 16u : 0u, len = k->len;
     if (roto_in_editor) return 0;
-    for (key = 0; key < 27u; key++) {
+    for (key = 0, bp = 0; key < 27u; key++) {
         uint32_t s, on;
-        if (rt_key_black(key)) continue;
+        if (rt_key_black(key)) {                             /* OP1..OP6: lit while their ring plays */
+            if (bp < ROTO_TRACKS && !((roto.mute >> bp) & 1u)) m |= 1u << key;
+            bp++;
+            continue;
+        }
         s = base + rt_white_place(key);
         if (s >= len) continue;
         on = k->step[s].on;

@@ -433,6 +433,7 @@ static void fire_now(uint32_t t, roto_track_t *k, uint32_t step_len, uint32_t po
     const roto_step_t *st = &k->step[pos < ROTO_STEPS ? pos : 0u];
     uint32_t i, g, note, vel;
     if (k->nheld) release(t, k);
+    if ((roto.mute >> t) & 1u) { if (k->a_n) rarp_stop(k); return; }   /* (muted: OP1..OP6) */
     if (!st->on) return;
     if (k->prob < 100u && audio_dice(100u) >= k->prob) { if (k->arp) rarp_stop(k); return; }
     if (roto.gprob < 100u && audio_dice(100u) >= roto.gprob) { if (k->arp) rarp_stop(k); return; }   /* (GROOVE PROB) */
