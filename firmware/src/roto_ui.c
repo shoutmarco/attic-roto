@@ -1136,6 +1136,37 @@ static void rt_playhead_box(uint32_t pos, uint32_t n, int32_t *x0, int32_t *y0, 
     }
 }
 
+/* ------------------------------------------------------------- splash
+ * The power-on screen: six rings in the rings' colours, each with a few hits spread
+ * evenly round it (as EUCLID spreads them), and the name big in the middle. */
+void roto_ui_splash(void)
+{
+    static const uint8_t HITS[ROTO_TRACKS] = {4, 3, 5, 2, 7, 1};
+    int32_t i, x, y;
+    uint32_t s, n;
+    rt_clip_all();
+    rt_rect(0, 0, RT_W, RT_H, RT_BG);
+    for (i = 0; i < ROTO_TRACKS; i++) {
+        int32_t r = 102 - i * 9;
+        rt_circle(RT_CX, 112, r, RT_TRK_HALF[i]);
+        n = HITS[i];
+        for (s = 0; s < n; s++) {
+            int32_t a = (int32_t)((s * 1024u) / n) - 256 + i * 37;
+            x = RT_CX + rt_round14(rt_cos(a) * r);
+            y = 112 + rt_round14(rt_sin(a) * r);
+            rt_diamond_fill(x, y, 3, RT_TRK_COL[i]);
+        }
+    }
+    rt_text_b(RT_CX - 5 * 8, 112 - 26, "ATTIC", 2, RT_TEXT);
+    rt_text_b(RT_CX - 4 * 8, 112 + 2, "ROTO", 2, RT_TEXT);
+    {
+        char v[12];                                          /* (the small font is capitals only) */
+        for (s = 0; s < 11u && ROTO_VERSION[s]; s++) v[s] = (char)(ROTO_VERSION[s] >= 'a' && ROTO_VERSION[s] <= 'z' ? ROTO_VERSION[s] - 32 : ROTO_VERSION[s]);
+        v[s] = 0;
+        rt_text_s(RT_CX - RT_TEXT_S_W(v) / 2, 226, v, RT_GREY);
+    }
+}
+
 /* ------------------------------------------------------------- state */
 static uint8_t roto_in_editor = 0;
 static uint8_t rt_shown = 0;               /* 0: nothing of ours on screen yet */

@@ -170,5 +170,6 @@ int  roto_ui_input(uint32_t pressed, uint32_t notes);
 int  roto_ui_draw(int force, uint32_t now_ms);   /* returns 1 if the screen is ours (caller skips Felucca drawing); force: redraw everything */
 void roto_ui_show(uint32_t what, uint32_t now_ms);   /* a knob turned: show its value in the centre for a moment */
 void roto_ui_audio_level(uint8_t level);
+void roto_ui_splash(void);                       /* the power-on screen */
 
 #endif /* ROTO_SEQ_H */
