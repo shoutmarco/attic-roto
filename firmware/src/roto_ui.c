@@ -1923,7 +1923,7 @@ int roto_ui_input(uint32_t pressed, uint32_t notes, uint32_t held)
 {
     (void)pressed;
     if (roto_in_editor) return 0;
-    if (ROTO_SIMPLE) {
+    if (ROTO_HOLD_EDIT) {
         /* white keys: press an empty step and it is on (a note that fits); hold a step and turn the knobs to edit
          * it; tap a step that is on (no knob turned) and it goes off when you let go */
         if (rt_hold != 0xFFu && (!((held >> rt_hold_key) & 1u) || rt_hold_sel != roto.sel)) {

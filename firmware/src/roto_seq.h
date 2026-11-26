@@ -30,10 +30,11 @@ typedef struct {    /* 3 bytes */
 } roto_step_t;
 typedef char roto_step_is_3_bytes[sizeof(roto_step_t) == 3u ? 1 : -1];
 
-/* the simple attic-roto: one screen. A held white key edits its step (K1 NOTE, K2 ACCENT, K3 LENGTH, K4 OCTAVE);
- * SEQ held: K1 the ring's length (1..32); otherwise K1 SOUND, K2 TONE, K3 SPACE, K4 SWING for the ring.
- * 0: the other screens on their buttons again */
-#define ROTO_SIMPLE 1
+/* the white keys: a tap adds or takes away a hit; held on the ring screen, the knobs edit that step (K1 NOTE in
+ * the key, K2 ACCENT, K3 LENGTH, K4 OCTAVE). ROTO_SIMPLE 1: one screen only (K1 SOUND, K2 TONE, K3 SPACE,
+ * K4 SWING; SEQ held + K1 the length; the other screens off). Marco: all the screens, full sound editing (0) */
+#define ROTO_HOLD_EDIT 1
+#define ROTO_SIMPLE 0
 
 typedef struct {
     roto_step_t step[ROTO_STEPS];

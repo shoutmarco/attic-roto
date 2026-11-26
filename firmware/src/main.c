@@ -325,6 +325,7 @@ static void fm1_main(void)
                 last = t;
             }
             if (done_at && fm1_ms - done_at >= 500u) break;
+            fm1_wdt_feed();                       /* (it takes ~2.5 s: the watchdog knows we are alive) */
             fm1_delay_ms(5);
             master_poll();
         }
