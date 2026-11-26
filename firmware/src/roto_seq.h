@@ -51,6 +51,7 @@ typedef struct {
     uint8_t eng, preset;
     uint8_t level, dly, rev, chor;
     int8_t  pan;
+    int8_t  drift;       /* the slow filter movement: the LFO (a slow sine, about ten bars) to the filter, -64..63 (0: none) */
     uint8_t kit;         /* DRUM: ROTO_KITS index (the kit's KIT setting over its preset) */
     char    name[12];    /* the preset's name, filled in when applied */
 } roto_sound_t;

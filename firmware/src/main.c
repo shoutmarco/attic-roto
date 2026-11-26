@@ -132,6 +132,15 @@ void roto_apply_part(uint32_t t)
         tk->p[P_DLY] = sd->dly;
         tk->p[P_REV] = sd->rev;
         tk->p[P_CHOR] = sd->chor;
+        if (sd->drift) {                                      /* the slow filter movement: a slow free LFO to the filter */
+            tk->p[P_LWAVE] = 0;
+            tk->p[P_LSYNC] = 0;                               /* (free: 0.05 Hz, about ten bars round) */
+            tk->p[P_LRATE] = 1;
+            tk->p[P_LTRIG] = 1;
+            tk->p[P_LPOL] = 0;
+            tk->p[P_LFADE] = 0;                               /* (no fade-in on each chord: it keeps moving) */
+            tk->p[P_LD_FLT] = sd->drift;
+        }
         e = ENGINES[tk->eng_req % NENGINES];
         nm = e->npresets ? e->presets[tk->preset % e->npresets].name : e->name;
         if (sd->eng == ROTO_ENG_DRUM) {                       /* a drum kit: its KIT over the preset, its own name */

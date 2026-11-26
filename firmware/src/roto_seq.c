@@ -240,6 +240,7 @@ void roto_seq_generate(uint32_t seed)
                 put(k, s, 48u + pc + (p[s] == 'a' ? home : STAB_ROOT[roto.mode][2]), 64u + rnd(16u));
     }
     sound(&roto.snd[2], SND_STAB[rnd(NSND(SND_STAB))], 82, 52, 20, -22);
+    roto.snd[2].drift = (int8_t)(44 + (int32_t)rnd(12u));           /* (it opens and closes, slowly, over about ten bars) */
 
     /* 4: a blip, on some power-ons only: one soft note in two bars */
     k = &roto.trk[3];

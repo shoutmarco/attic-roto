@@ -95,6 +95,15 @@ static void host_roto_boot(uint32_t seed)
         tk->p[P_DLY] = sd->dly;
         tk->p[P_REV] = sd->rev;
         tk->p[P_CHOR] = sd->chor;
+        if (sd->drift) {
+            tk->p[P_LWAVE] = 0;
+            tk->p[P_LSYNC] = 0;                               /* (free: 0.05 Hz, about ten bars round) */
+            tk->p[P_LRATE] = 1;
+            tk->p[P_LTRIG] = 1;
+            tk->p[P_LPOL] = 0;
+            tk->p[P_LFADE] = 0;                               /* (no fade-in on each chord: it keeps moving) */
+            tk->p[P_LD_FLT] = sd->drift;
+        }
         e = ENGINES[tk->eng_req % NENGINES];
         nm = e->npresets ? e->presets[tk->preset % e->npresets].name : e->name;
         for (i = 0; i + 1u < sizeof sd->name && nm[i]; i++)
@@ -153,6 +162,8 @@ int main(int argc, char **argv)
         song.g[G_DCOLOR] = (int16_t)col;
         roto.evolve = 0;                            /* (no throws: measure the setting itself) */
     }
+    if (getenv("NOFX"))                             /* NOFX: no delay, reverb, chorus, throws (measure the sound itself) */
+        for (t = 0; t < NTRK; t++) { trk[t].p[P_DLY] = 0; trk[t].p[P_REV] = 0; trk[t].p[P_CHOR] = 0; roto.evolve = 0; }
     if (solo)
         for (t = 0; t < NTRK; t++)
             if (t + 1u != solo) trk[t].p[P_LEVEL] = 0;
