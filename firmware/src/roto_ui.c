@@ -919,18 +919,6 @@ static void rt_aline(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
     rt_cy0 = a; rt_cy1 = b;
 }
 
-static void rt_dash_arc(int32_t r, uint16_t c)
-{
-    int32_t a, x, y, px = 0, py = 0, keep = rt_cy1;
-    if (rt_cy1 > RT_A_BASE) rt_cy1 = RT_A_BASE;           /* (inside the dome only) */
-    for (a = 512 - 48; a <= 1024 + 48; a += 3) {
-        rt_apol(a, r, &x, &y);
-        if (((a + 600) / 14) & 1) rt_aline(px, py, x, y, c);
-        px = x; py = y;
-    }
-    rt_cy1 = keep;
-}
-
 static void rt_ring_at(int32_t x, int32_t y, int32_t r, uint16_t c)
 {
     int32_t a = rt_cy1;
@@ -1067,62 +1055,91 @@ static void rt_draw_grv(void)
 }
 
 /* ------------------------------------------------------------- arp
- * The gauge again, now the selected ring's arp: the dome is the keyboard (low left,
- * high right), the notes of the hit being rolled sit on the dashed arcs (one per
- * octave of RANGE), the needle points at the one playing now; the ticks round the
- * dome are the RATE, the ellipse the LENGTH, the icon the MODE. */
-static int32_t rt_arc_r(uint32_t o, uint32_t range) { return 94 - (int32_t)(range - 1u - o) * 19; }
+ * After the compass reference: the twelve notes round the ring (C at the top,
+ * clockwise), the notes of the hit being rolled in yellow, the others small and
+ * white. The green needle points at the note playing now; the red spokes are the
+ * RATE (more spokes, faster), the blue dashed rings in the middle the RANGE (one
+ * per octave). Top left: the note playing, big; top right: MODE, RATE, LENGTH, the
+ * one turning in green; along the bottom: notes, range, on / off. A faint
+ * starfield, green corner brackets, and the chevrons light the way the arp runs. */
+#define RT_C_X   120
+#define RT_C_Y   128
+#define RT_C_R    64           /* the ring */
+#define RT_C_L    78           /* the note names */
+#define RT_CG    RT_RGB(96, 232, 120)
+#define RT_CGD   RT_RGB(36, 96, 50)
+#define RT_CYL   RT_RGB(248, 224, 72)
+#define RT_CR    RT_RGB(232, 64, 56)
+#define RT_CRD   RT_RGB(116, 34, 30)
+#define RT_CW    RT_RGB(224, 224, 224)
+#define RT_CWD   RT_RGB(112, 112, 112)
+#define RT_CB    RT_RGB(88, 148, 248)
+#define RT_CBD   RT_RGB(34, 58, 104)
+#define RT_CS    RT_RGB(64, 64, 78)
 
-static void rt_anote(uint32_t i, int32_t *x, int32_t *y)
+static void rt_cpol(int32_t a, int32_t r, int32_t *x, int32_t *y)
 {
-    uint32_t n = rt_sn.a_n, range = rt_sn.a_range ? rt_sn.a_range : 1u, per = n / range ? n / range : 1u;
-    int32_t lo = rt_sn.a_notes[0], hi = rt_sn.a_notes[0], a;
-    uint32_t j;
-    for (j = 0; j < n; j++) { if (rt_sn.a_notes[j] < lo) lo = rt_sn.a_notes[j]; if (rt_sn.a_notes[j] > hi) hi = rt_sn.a_notes[j]; }
-    a = 512 + 34 + (hi > lo ? ((rt_sn.a_notes[i] - lo) * (512 - 68)) / (hi - lo) : 222);
-    rt_apol(a, rt_arc_r((i / per) < range ? i / per : range - 1u, range), x, y);
+    *x = RT_C_X + rt_round14(rt_cos(a) * r);
+    *y = RT_C_Y + rt_round14(rt_sin(a) * r);
 }
 
-static void rt_aneedle(uint32_t i, uint16_t c)
+static int32_t rt_pc_angle(uint32_t pc) { return 768 + (int32_t)((pc % 12u) * 1024u + 6u) / 12; }   /* C at the top, clockwise */
+
+/* filled triangle, a span per row */
+static void rt_ftri(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2, uint16_t c)
 {
-    int32_t nx, ny, dx, dy, len, bx, by, px, py, x0, y0;
-    rt_anote(i, &nx, &ny);
-    dx = nx - RT_A_X; dy = ny - RT_A_Y;
-    len = rt_isqrt(dx * dx + dy * dy);
-    if (len < 24) return;
-    bx = RT_A_X + (dx * (len - 9)) / len; by = RT_A_Y + (dy * (len - 9)) / len;
-    px = (-dy * 5) / len; py = (dx * 5) / len;
-    x0 = RT_A_X + (dx * 12) / len; y0 = RT_A_Y + (dy * 12) / len;
-    rt_aline(x0, y0, bx + px, by + py, c);
-    rt_aline(x0, y0, bx - px, by - py, c);
-    rt_aline(bx + px, by + py, bx - px, by - py, c);
+    int32_t t, y;
+    if (y1 < y0) { t = y0; y0 = y1; y1 = t; t = x0; x0 = x1; x1 = t; }
+    if (y2 < y0) { t = y0; y0 = y2; y2 = t; t = x0; x0 = x2; x2 = t; }
+    if (y2 < y1) { t = y1; y1 = y2; y2 = t; t = x1; x1 = x2; x2 = t; }
+    if (y2 == y0) return;
+    for (y = y0; y <= y2; y++) {
+        int32_t xa = x0 + ((x2 - x0) * (y - y0)) / (y2 - y0), xb;
+        if (y < y1) xb = x0 + ((x1 - x0) * (y - y0)) / (y1 - y0);
+        else if (y2 != y1) xb = x1 + ((x2 - x1) * (y - y1)) / (y2 - y1);
+        else xb = x1;
+        if (xa > xb) { t = xa; xa = xb; xb = t; }
+        rt_hspan(xa, xb + 1, y, c);
+    }
 }
 
+static void rt_cneedle(uint32_t pc, uint16_t c)
+{
+    int32_t a = rt_pc_angle(pc), tx, ty, lx, ly, rx, ry;
+    rt_cpol(a, RT_C_R - 6, &tx, &ty);
+    rt_cpol(a - 26, 30, &lx, &ly);
+    rt_cpol(a + 26, 30, &rx, &ry);
+    rt_ftri(tx, ty, lx, ly, rx, ry, c);
+    rt_cpol(a + 512, 10, &lx, &ly);                    /* (a short tail through the centre) */
+    rt_line(RT_C_X, RT_C_Y, lx, ly, c);
+}
+
+/* everything the needle and its note's name cover, for a repaint */
 static void rt_aneedle_box(uint32_t i, int32_t *x0, int32_t *y0, int32_t *x1, int32_t *y1)
 {
-    int32_t nx, ny;
-    rt_anote(i, &nx, &ny);
-    *x0 = (nx < RT_A_X ? nx : RT_A_X) - 9; *x1 = (nx > RT_A_X ? nx : RT_A_X) + 10;
-    *y0 = (ny < RT_A_Y ? ny : RT_A_Y) - 9; *y1 = (ny > RT_A_Y ? ny : RT_A_Y) + 10;
+    int32_t x, y;
+    rt_cpol(rt_pc_angle(rt_sn.a_notes[i]), RT_C_L, &x, &y);
+    *x0 = (x < RT_C_X ? x : RT_C_X) - 14; *x1 = (x > RT_C_X ? x : RT_C_X) + 15;
+    *y0 = (y < RT_C_Y ? y : RT_C_Y) - 14; *y1 = (y > RT_C_Y ? y : RT_C_Y) + 15;
 }
 
-static void rt_tri(int32_t x, int32_t y, int32_t h, int up, uint16_t c)   /* filled, apex at (x, y) */
+static void rt_cdash(int32_t r, uint16_t c)
 {
-    int32_t i;
-    for (i = 0; i < h; i++) rt_hspan(x - i, x + i + 1, up ? y + i : y - i, c);
+    int32_t a, x, y, px = 0, py = 0, step = r < 12 ? 32 : 16;
+    for (a = 0; a <= 1024; a += step / 2) {
+        rt_cpol(a, r, &x, &y);
+        if (a && ((a / (step / 2)) & 1)) rt_line(px, py, x, y, c);
+        px = x; py = y;
+    }
 }
 
-static void rt_amode_icon(int32_t x, int32_t y, uint32_t m, uint16_t c)
+static void rt_chevrons(int32_t x, int right, uint16_t c)      /* three, pointing out */
 {
-    switch (m) {
-    case ROTO_ARP_UP:     rt_tri(x, y - 6, 6, 1, c); rt_rect(x - 1, y, x + 2, y + 7, c); break;
-    case ROTO_ARP_DOWN:   rt_tri(x, y + 6, 6, 0, c); rt_rect(x - 1, y - 7, x + 2, y, c); break;
-    case ROTO_ARP_UPDOWN: rt_tri(x - 4, y - 7, 5, 1, c); rt_rect(x - 5, y - 2, x - 3, y + 7, c);
-                          rt_tri(x + 4, y + 7, 5, 0, c); rt_rect(x + 3, y - 7, x + 5, y + 2, c); break;
-    case ROTO_ARP_RANDOM: rt_rect(x - 7, y - 6, x - 3, y - 2, c); rt_rect(x + 2, y - 2, x + 6, y + 2, c);
-                          rt_rect(x - 4, y + 3, x, y + 7, c); rt_rect(x + 5, y - 8, x + 8, y - 5, c); break;
-    case ROTO_ARP_PEDAL:  rt_tri(x, y - 6, 6, 1, c); rt_rect(x - 1, y, x + 2, y + 4, c); rt_rect(x - 7, y + 5, x + 8, y + 7, c); break;
-    default:              rt_rect(x - 6, y - 1, x + 7, y + 2, c); break;   /* OFF: a dash */
+    int32_t i, d = right ? 1 : -1;
+    for (i = 0; i < 3; i++) {
+        int32_t cx = x + d * i * 6;
+        rt_line(cx - d * 3, RT_C_Y - 5, cx + d * 2, RT_C_Y, c);
+        rt_line(cx + d * 2, RT_C_Y, cx - d * 3, RT_C_Y + 5, c);
     }
 }
 
@@ -1131,88 +1148,102 @@ static void rt_draw_arp(void)
     static const char *const MODE_N[ROTO_ARP_MODES] = {"OFF", "UP", "DOWN", "UP-DOWN", "RANDOM", "PEDAL"};
     static const char *const RATE_N[3] = {"1/32", "1/16", "1/8"};
     static const char *const PC[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-    static const uint8_t TICKS[3] = {32, 16, 8};
+    static const uint8_t SPOKES[3] = {32, 16, 8};
     uint32_t show = rt_sn.show >= ROTO_SHOW_A1 && rt_sn.show <= ROTO_SHOW_A4 ? rt_sn.show : 0u;
-    uint32_t range = rt_sn.a_range ? rt_sn.a_range : 1u, n = rt_sn.a_n, i, o;
+    uint32_t range = rt_sn.a_range ? (rt_sn.a_range > 3u ? 3u : rt_sn.a_range) : 1u, n = rt_sn.a_n, i;
+    uint32_t on = rt_sn.a_mode && n, cur = on && rt_sn.a_idx < n ? rt_sn.a_notes[rt_sn.a_idx] : 0xFFu;
+    uint16_t chord = 0;
     int32_t x, y, x1, y1, a;
-    char l[16], r[16];
+    char t[24];
 
-    rt_rect(RT_A_X, RT_RULE_Y + 6, RT_A_X + 1, RT_H - 6, RT_AM);   /* the frame */
-    rt_hspan(6, RT_W - 6, RT_A_Y, RT_AM);
-    for (a = 640; a <= 896; a += 256) {
-        rt_apol(a, 112, &x, &y); rt_apol(a + 512, 44, &x1, &y1);
-        rt_aline(x, y, x1, y1, RT_AD);
-        rt_apol(a, 118, &x, &y); rt_apol(a, 134, &x1, &y1);
-        rt_aline(x, y, x1, y1, RT_AM);
-    }
-    for (a = 512; a < 1024; a += 2) {                              /* the dome; the RATE ticks inside it */
-        rt_apol(a, RT_A_R, &x, &y); rt_apol(a + 2, RT_A_R, &x1, &y1);
-        rt_aline(x, y, x1, y1, RT_AY);
-    }
-    rt_rect(RT_A_X - RT_A_R, RT_A_Y, RT_A_X - RT_A_R + 1, RT_A_BASE, RT_AY);
-    rt_rect(RT_A_X + RT_A_R, RT_A_Y, RT_A_X + RT_A_R + 1, RT_A_BASE, RT_AY);
-    rt_hspan(RT_A_X - RT_A_R, RT_A_X + RT_A_R + 1, RT_A_BASE, RT_AY);
-    {
-        uint32_t t = TICKS[rt_sn.a_rate < 3u ? rt_sn.a_rate : 1u];
-        for (i = 1; i < t; i++) {
-            a = 512 + (int32_t)((i * 512u) / t);
-            rt_apol(a, RT_A_R - 2, &x, &y); rt_apol(a, RT_A_R - (i % 4u ? 5 : 8), &x1, &y1);
-            rt_aline(x, y, x1, y1, show == ROTO_SHOW_A2 ? RT_AY : RT_AM);
+    for (i = 0; i < n; i++) chord |= (uint16_t)(1u << (rt_sn.a_notes[i] % 12u));
+    {   /* the starfield, faint, the same every time */
+        uint32_t h = 0x2545F491u;
+        for (i = 0; i < 70u; i++) {
+            h ^= h << 13; h ^= h >> 17; h ^= h << 5;
+            x = 4 + (int32_t)(h % 232u); y = RT_RULE_Y + 4 + (int32_t)((h >> 12) % 194u);
+            rt_rect(x, y, x + 1 + (int32_t)((h >> 28) == 0u), y + 1, RT_CS);
         }
     }
-    for (o = 0; o < 3u; o++)                                         /* RANGE: an arc per octave */
-        rt_dash_arc(94 - (int32_t)(2u - o) * 19, o >= 3u - range ? (show == ROTO_SHOW_A3 ? RT_AY : RT_AM) : RT_AD);
-    {                                                              /* LENGTH: the ellipse */
-        int32_t b = 4 + (rt_sn.a_len * 30) / 100, t, px = 0, py = 0, ca = rt_cos(-52), sa = rt_sin(-52);
-        for (t = 0; t <= 1024; t += 8) {
-            int32_t ex = rt_round14(rt_cos(t) * 80), ey = rt_round14(rt_sin(t) * b);
-            x = 150 + rt_round14(ex * ca - ey * sa);
-            y = 136 + rt_round14(ex * sa + ey * ca);
-            if (t) rt_aline(px, py, x, y, show == ROTO_SHOW_A4 ? RT_AY : RT_AM);
-            px = x; py = y;
+    {   /* the corner brackets */
+        static const int8_t CX[4] = {3, 236, 3, 236}, CY[4] = {23, 23, 214, 214}, DX[4] = {1, -1, 1, -1}, DY[4] = {1, 1, -1, -1};
+        for (i = 0; i < 4u; i++) {
+            int32_t bx = CX[i], by = CY[i];
+            rt_rect(DX[i] > 0 ? bx : bx - 7, by, DX[i] > 0 ? bx + 8 : bx + 1, by + 1, RT_CG);
+            rt_rect(bx, DY[i] > 0 ? by : by - 7, bx + 1, DY[i] > 0 ? by + 8 : by + 1, RT_CG);
         }
     }
-    rt_ring_at(RT_A_X, RT_A_Y, 11, RT_AY);
-    rt_amode_icon(78, 92, rt_sn.a_mode, show == ROTO_SHOW_A1 ? RT_AY : RT_AM);
-    if (rt_sn.a_mode && n) {                                       /* the hit's notes; the needle to the one playing */
-        for (i = 0; i < n; i++) {
-            if (i == rt_sn.a_idx) continue;
-            rt_anote(i, &x, &y);
-            rt_rect(x - 2, y - 2, x + 3, y + 3, RT_BG);
-            rt_ring_at(x, y, 2, RT_AM);
-        }
-        if (rt_sn.a_idx < n) {
-            rt_aneedle(rt_sn.a_idx, RT_AY);
-            rt_anote(rt_sn.a_idx, &x, &y);
-            rt_rect(x - 6, y - 6, x + 7, y + 7, RT_BG);
-            rt_ring_at(x, y, 6, RT_AY);
-            rt_rect(x - 2, y - 2, x + 3, y + 3, RT_AY);
+    {   /* RATE: the red spokes */
+        uint32_t s = SPOKES[rt_sn.a_rate < 3u ? rt_sn.a_rate : 1u];
+        uint16_t c = show == ROTO_SHOW_A2 ? RT_CR : on ? RT_CR : RT_CRD;
+        for (i = 0; i < s; i++) {
+            a = 768 + (int32_t)((i * 1024u) / s);
+            rt_cpol(a, i % (s / 8u) ? 46 : 32, &x, &y); rt_cpol(a, RT_C_R - 5, &x1, &y1);
+            rt_line(x, y, x1, y1, i % (s / 8u) ? RT_CRD : c);
         }
     }
-    {   /* the readout: the note playing and the mode; while a dial turns, its name and value */
-        uint32_t k = 0;
-        const char *nm = show == ROTO_SHOW_A1 ? "MODE" : show == ROTO_SHOW_A2 ? "RATE" : show == ROTO_SHOW_A3 ? "RANGE" : show == ROTO_SHOW_A4 ? "LENGTH" : 0;
-        if (nm) {
-            for (k = 0; nm[k]; k++) l[k] = nm[k];
-            l[k] = 0;
-            if (show == ROTO_SHOW_A1) { const char *m = MODE_N[rt_sn.a_mode % ROTO_ARP_MODES]; for (k = 0; m[k]; k++) r[k] = m[k]; r[k] = 0; }
-            else if (show == ROTO_SHOW_A2) { const char *m = RATE_N[rt_sn.a_rate < 3u ? rt_sn.a_rate : 1u]; for (k = 0; m[k]; k++) r[k] = m[k]; r[k] = 0; }
-            else if (show == ROTO_SHOW_A3) { rt_fmt_u(r, range); k = rt_strlen(r); r[k] = ' '; r[k+1] = 'O'; r[k+2] = 'C'; r[k+3] = 'T'; r[k+4] = 0; }
-            else { rt_fmt_u(r, rt_sn.a_len); k = rt_strlen(r); r[k] = '%'; r[k+1] = 0; }
+    rt_circle(RT_C_X, RT_C_Y, RT_C_R, RT_CWD);                       /* the ring and its note marks */
+    rt_circle(RT_C_X, RT_C_Y, RT_C_R - 2, RT_CWD);
+    for (i = 0; i < 12u; i++) {
+        uint32_t hit = (chord >> i) & 1u, now = cur != 0xFFu && cur % 12u == i;
+        uint16_t c = now ? RT_CG : hit ? RT_CYL : RT_CW;
+        a = rt_pc_angle(i);
+        rt_cpol(a, RT_C_R + 2, &x, &y); rt_cpol(a, RT_C_R + (hit || now ? 8 : 5), &x1, &y1);
+        rt_line(x, y, x1, y1, hit || now ? c : RT_CWD);
+        rt_cpol(a, RT_C_L, &x, &y);
+        if (hit || now) rt_text_b(x - (int32_t)rt_strlen(PC[i]) * 4, y - 5, PC[i], 1, c);
+        else {
+            rt_text_s(x - RT_TEXT_S_W(PC[i]) / 2, y - 3, PC[i], RT_CWD);
+        }
+    }
+    {   /* RANGE: a blue dashed ring per octave */
+        uint32_t o;
+        for (o = 0; o < 3u; o++) rt_cdash(9 + (int32_t)o * 7, o < range ? (show == ROTO_SHOW_A3 ? RT_CB : on ? RT_CB : RT_CBD) : RT_CBD);
+    }
+    if (cur != 0xFFu) rt_cneedle(cur, RT_CG);                       /* the needle */
+    rt_rect(RT_C_X - 1, RT_C_Y - 1, RT_C_X + 2, RT_C_Y + 2, RT_CW);
+    {   /* the chevrons: the way the arp runs */
+        uint32_t m = rt_sn.a_mode;
+        rt_chevrons(212, 1, m == ROTO_ARP_UP || m == ROTO_ARP_UPDOWN || m == ROTO_ARP_PEDAL ? RT_CG : m == ROTO_ARP_RANDOM ? RT_CYL : RT_CGD);
+        rt_chevrons(28, 0, m == ROTO_ARP_DOWN || m == ROTO_ARP_UPDOWN ? RT_CG : m == ROTO_ARP_RANDOM ? RT_CYL : RT_CGD);
+    }
+    {   /* top left: the note playing, big, its octave under it */
+        uint32_t k;
+        if (cur != 0xFFu) {
+            for (k = 0; PC[cur % 12u][k]; k++) t[k] = PC[cur % 12u][k];
+            t[k] = 0;
+            rt_text_b(14, 28, t, 2, RT_CG);
+            t[0] = 'O'; t[1] = 'C'; t[2] = 'T'; t[3] = ' '; rt_fmt_u(t + 4, cur / 12u - 1u);
+            rt_text_s(14, 53, t, RT_CW);
         } else {
-            const char *m = MODE_N[rt_sn.a_mode % ROTO_ARP_MODES];
-            if (rt_sn.a_mode && n && rt_sn.a_idx < n) {
-                uint32_t nt = rt_sn.a_notes[rt_sn.a_idx];
-                const char *p = PC[nt % 12u];
-                for (k = 0; p[k]; k++) l[k] = p[k];
-                rt_fmt_u(l + k, nt / 12u - 1u);
-            } else { l[0] = rt_sn.a_mode ? '-' : 0; l[1] = 0; }
-            for (k = 0; m[k]; k++) r[k] = m[k];
-            if (rt_sn.a_mode) { const char *s = RATE_N[rt_sn.a_rate < 3u ? rt_sn.a_rate : 1u]; r[k++] = ' '; for (; *s; s++) r[k++] = *s; }
-            r[k] = 0;
+            rt_text_b(14, 28, rt_sn.a_mode ? "--" : "OFF", 2, RT_CGD);
+            rt_text_s(14, 53, rt_sn.a_mode ? "WAITING" : "ARP", RT_CWD);
         }
-        rt_text_b(16, 212, l, 1, show ? RT_AY : RT_AM);
-        rt_text_b(224 - (int32_t)rt_strlen(r) * 8, 212, r, 1, show ? RT_AY : RT_AM);
+    }
+    {   /* top right: MODE, RATE, LENGTH; the one turning green */
+        static const char *const LB[3] = {"MODE: ", "RATE: ", "LENGTH: "};
+        static const uint8_t SH[3] = {ROTO_SHOW_A1, ROTO_SHOW_A2, ROTO_SHOW_A4};
+        uint32_t row, k, j;
+        for (row = 0; row < 3u; row++) {
+            const char *v = row == 0u ? MODE_N[rt_sn.a_mode % ROTO_ARP_MODES] : row == 1u ? RATE_N[rt_sn.a_rate < 3u ? rt_sn.a_rate : 1u] : 0;
+            uint32_t hot = show == SH[row];
+            k = 0;
+            for (j = 0; LB[row][j]; j++) t[k++] = LB[row][j];
+            if (v) for (j = 0; v[j]; j++) t[k++] = v[j];
+            else { rt_fmt_u(t + k, rt_sn.a_len); k = rt_strlen(t); t[k++] = '%'; }
+            t[k] = 0;
+            rt_text_s(232 - RT_TEXT_S_W(t), 26 + (int32_t)row * 10, t, hot ? RT_CG : RT_CW);
+        }
+    }
+    {   /* along the bottom: notes, range, on / off */
+        uint32_t k;
+        uint16_t c3 = show == ROTO_SHOW_A3 ? RT_CG : RT_CW;
+        t[0] = 'N'; t[1] = 'O'; t[2] = 'T'; t[3] = 'E'; t[4] = 'S'; t[5] = ' '; rt_fmt_u(t + 6, n);
+        rt_text_s(12, 223, t, RT_CW);
+        t[0] = 'R'; t[1] = 'A'; t[2] = 'N'; t[3] = 'G'; t[4] = 'E'; t[5] = ' '; rt_fmt_u(t + 6, range);
+        k = rt_strlen(t); t[k] = ' '; t[k + 1] = 'O'; t[k + 2] = 'C'; t[k + 3] = 'T'; t[k + 4] = 0;
+        rt_text_s(120 - RT_TEXT_S_W(t) / 2, 223, t, c3);
+        rt_text_s(228 - RT_TEXT_S_W(rt_sn.a_mode ? "ARP ON" : "ARP OFF"), 223, rt_sn.a_mode ? "ARP ON" : "ARP OFF", rt_sn.a_mode ? RT_CG : RT_CWD);
     }
 }
 
@@ -1750,7 +1781,7 @@ int roto_ui_draw(int force, uint32_t now_ms)
             rt_aneedle_box(c, &x0, &y0, &x1, &y1);
             for (y = y0; y < y1; y += RT_BAND) rt_repaint(x0, y, x1, y + RT_BAND < y1 ? y + RT_BAND : y1);
         }
-        rt_repaint(0, 208, RT_W, 230);                   /* (the note's name along the bottom) */
+        rt_repaint(0, 26, 104, 62);                      /* (the note's name, top left) */
     }
     rt_arp_idx = rt_sn.a_idx;
     if (rt_sn.view == ROTO_VIEW_FLT) {                  /* the small circle on the filter screen */
