@@ -1804,11 +1804,19 @@ static void ui_input(void)
     }
     if (ROTO_SIMPLE && roto.view == ROTO_VIEW_RING && !roto.naming) {
         /* the simple attic-roto. A white key held: K1 NOTE (in the key), K2 ACCENT, K3 LENGTH, K4 OCTAVE of its step.
-         * Nothing held: K1 SOUND, K2 TONE, K3 SPACE, K4 SWING for the ring */
+         * SEQ held: K1 the ring's length. Nothing held: K1 SOUND, K2 TONE, K3 SPACE, K4 SWING for the ring */
         int hs = roto_ui_held_step();
         int32_t v1 = panel_enc(EN_K1), v2 = panel_enc(EN_K2), v3 = panel_enc(EN_K3), v4 = panel_enc(EN_K4);
         uint32_t ring = roto.sel < ROTO_TRACKS ? roto.sel : 0u, part = roto.trk[ring].part;
-        if (hs >= 0) {
+        if ((fm1_in.buttons >> panel.btn[B_SEQ]) & 1u) {   /* SEQ held: K1 the ring's LENGTH (1..32 steps) */
+            if (v1) {
+                char b[4];
+                roto_len_set(ring, (uint32_t)clamp((int32_t)roto.trk[ring].len + v1, 1, ROTO_STEPS));
+                b[0] = (char)(roto.trk[ring].len >= 10u ? '0' + roto.trk[ring].len / 10u : '0' + roto.trk[ring].len);
+                b[1] = roto.trk[ring].len >= 10u ? (char)('0' + roto.trk[ring].len % 10u) : 0; b[2] = 0;
+                roto_ui_say(b, "LENGTH", fm1_ms);
+            }
+        } else if (hs >= 0) {
             if (v1 || v2 || v3 || v4) {
                 roto_step_edit(ring, (uint32_t)hs, v1, v2, v3 > 0 ? 1 : v3 < 0 ? -1 : 0, v4 > 0 ? 1 : v4 < 0 ? -1 : 0);
                 roto_ui_hold_used();
