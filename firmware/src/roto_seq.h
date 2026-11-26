@@ -23,9 +23,16 @@
 typedef struct {    /* 3 bytes */
     uint8_t note : 7;   /* MIDI note 0..127 */
     uint8_t on : 1;
-    uint8_t vel;        /* 1..127 */
-    uint8_t chance;     /* 0: always plays; 1..99: a ghost note, plays that percent of the time */
+    uint8_t vel : 7;    /* 1..127 */
+    uint8_t len_lo : 1; /* LENGTH (roto_step_len): its low bit ... */
+    uint8_t chance : 7; /* 0: always plays; 1..99: a ghost note, plays that percent of the time */
+    uint8_t len_hi : 1; /* ... and its high bit: 0 the ring's own, 1 SHORT, 2 LONG, 3 FULL (older saves: 0) */
 } roto_step_t;
+typedef char roto_step_is_3_bytes[sizeof(roto_step_t) == 3u ? 1 : -1];
+
+/* the simple attic-roto: one screen. A held white key edits its step (K1 NOTE, K2 ACCENT, K3 LENGTH, K4 OCTAVE);
+ * otherwise K1 SOUND, K2 TONE, K3 SPACE, K4 SWING for the ring. 0: the other screens on their buttons again */
+#define ROTO_SIMPLE 1
 
 typedef struct {
     roto_step_t step[ROTO_STEPS];
@@ -138,7 +145,8 @@ enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_
        ROTO_SHOW_SAVED, ROTO_SHOW_NOTSAVED,
        ROTO_SHOW_A1, ROTO_SHOW_A2, ROTO_SHOW_A3, ROTO_SHOW_A4,   /* ARP: K1..K4 */
        ROTO_SHOW_O1, ROTO_SHOW_O2, ROTO_SHOW_O3, ROTO_SHOW_O4,   /* GLO: K1..K4 */
-       ROTO_SHOW_S1, ROTO_SHOW_S2, ROTO_SHOW_S3, ROTO_SHOW_S4 };   /* SOUND: K1..K4 (the page says which) */
+       ROTO_SHOW_S1, ROTO_SHOW_S2, ROTO_SHOW_S3, ROTO_SHOW_S4,   /* SOUND: K1..K4 (the page says which) */
+       ROTO_SHOW_TEXT };  /* roto_ui_say's words */
 
 extern roto_seq_t roto;
 
@@ -157,6 +165,9 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate);
 
 /* editing (UI side) */
 void roto_step_toggle(uint32_t trk, uint32_t step);
+void roto_step_add(uint32_t trk, uint32_t step);   /* switch a step on with a note that carries the line on, an accent by where it falls */
+void roto_step_edit(uint32_t trk, uint32_t step, int32_t notes_in_key, int32_t accent, int32_t length, int32_t octaves);
+uint32_t roto_step_len(const roto_step_t *st);   /* 0 the ring's own, 1 SHORT, 2 LONG, 3 FULL */
 void roto_len_set(uint32_t trk, uint32_t len);
 void roto_fill(uint32_t trk, int32_t dir);     /* one hit more (dir > 0) or fewer, spread evenly, notes kept */
 void roto_rotate(uint32_t trk, int32_t dir);   /* spin the pattern one step later (dir > 0) or earlier */
@@ -227,10 +238,14 @@ void roto_fx_send(uint32_t trk, uint8_t dly);   /* a dub throw: the ring's delay
 void roto_fx_feedback(uint8_t fb);              /* ... and the delay feedback */
 
 /* UI hooks (roto_ui.c), called from ui_input.c / ui_draw.c */
-int  roto_ui_input(uint32_t pressed, uint32_t notes);
+int  roto_ui_input(uint32_t pressed, uint32_t notes, uint32_t held);   /* notes: keys just pressed; held: keys down now */
 int  roto_ui_draw(int force, uint32_t now_ms);   /* returns 1 if the screen is ours (caller skips Felucca drawing); force: redraw everything */
 void roto_ui_show(uint32_t what, uint32_t now_ms);   /* a knob turned: show its value in the centre for a moment */
 void roto_ui_audio_level(uint8_t level);
+void roto_ui_say(const char *big, const char *small, uint32_t now_ms);   /* the centre: these words for a moment */
+int roto_ui_held_step(void);                  /* the step whose white key is held (the selected ring), or -1 */
+void roto_ui_hold_used(void);                 /* the held step was edited: letting go keeps it */
+void roto_ui_say_step(uint32_t now_ms);       /* the centre: the held step's note, accent, length */
 void roto_ui_splash(void);                       /* the power-on screen */
 int roto_ui_splash_frame(int32_t prev, int32_t t);   /* the logo raining in, t ms on (prev: the last frame's t, or -1); 1: done */
 uint32_t roto_key_leds(void);                    /* the keys lit: the ring's steps, the playhead's key flipped (bit k: key k of 27) */

@@ -447,7 +447,11 @@ static void fire_now(uint32_t t, roto_track_t *k, uint32_t step_len, uint32_t po
         k->held[k->nheld++] = (uint8_t)n;
         roto_note_on(k->part, (uint8_t)n, vel);
     }
-    g = (step_len * (k->gate ? k->gate : 50u)) / 100u;
+    {
+        static const uint8_t LEN_PCT[4] = {0, 15, 70, 100};   /* LENGTH: the ring's own, SHORT, LONG, FULL */
+        uint32_t L = roto_step_len(st);
+        g = (step_len * (L ? LEN_PCT[L] : (k->gate ? k->gate : 50u))) / 100u;
+    }
     k->gate_left = g ? g : 1u;
 }
 
@@ -663,6 +667,79 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
 }
 
 /* ------------------------------------------------------------- editing */
+uint32_t roto_step_len(const roto_step_t *st) { return (uint32_t)st->len_lo | ((uint32_t)st->len_hi << 1); }
+
+static int roto_in_key(int32_t n)                    /* n is in the key (roto.root, roto.mode) */
+{
+    const uint8_t *sc = MODE_SC[roto.mode % 3u];
+    uint32_t pc = (uint32_t)(n + 120 - (int32_t)roto.root) % 12u, j;
+    for (j = 0; j < 7u; j++) if (sc[j] == pc) return 1;
+    return 0;
+}
+
+static void step_belongs(roto_track_t *k, uint32_t step)   /* a step set by hand: not FILL's, and the pattern's own */
+{
+    uint32_t i, j = 0;
+    for (i = 0; i < k->fill_n; i++) if (k->fill_at[i] != step) k->fill_at[j++] = k->fill_at[i];
+    k->fill_n = (uint8_t)j;
+    home_save(k);
+}
+
+void roto_step_add(uint32_t trk, uint32_t step)
+{
+    roto_track_t *k;
+    roto_step_t *st;
+    uint32_t s, d, at;
+    int32_t note;
+    if (trk >= ROTO_TRACKS || step >= ROTO_STEPS) return;
+    k = &roto.trk[trk];
+    st = &k->step[step];
+    if (st->on) return;
+    note = k->fill_note ? (int32_t)k->fill_note : 60;
+    if (roto.snd[k->part].eng == ROTO_ENG_DRUM) {           /* a drum ring: its one drum */
+        for (s = 0; s < k->len; s++) if (k->step[s].on) { note = k->step[s].note; break; }
+    } else {                                                 /* the line carries on: the nearest note before it */
+        for (d = 1; d < (uint32_t)k->len; d++) {
+            s = (step + k->len - d) % k->len;
+            if (k->step[s].on) { note = k->step[s].note; break; }
+        }
+        while (note > 0 && !roto_in_key(note)) note--;
+    }
+    at = (step * (k->div ? k->div : 1u)) % 4u;               /* the accent: on the beat, the off-beat, between */
+    st->note = (uint8_t)note;
+    st->vel = (uint8_t)(at == 0u ? 112u : at == 2u ? 92u : 76u);
+    st->chance = 0; st->len_lo = 0; st->len_hi = 0;
+    st->on = 1;
+    step_belongs(k, step);
+}
+
+void roto_step_edit(uint32_t trk, uint32_t step, int32_t notes_in_key, int32_t accent, int32_t length, int32_t octaves)
+{
+    roto_track_t *k;
+    roto_step_t *st;
+    int32_t n, v, l;
+    if (trk >= ROTO_TRACKS || step >= ROTO_STEPS) return;
+    k = &roto.trk[trk];
+    st = &k->step[step];
+    if (!st->on) return;
+    if (roto.snd[k->part].eng != ROTO_ENG_DRUM) {            /* (a drum ring keeps its drum) */
+        n = st->note;
+        while (notes_in_key > 0) { do n++; while (n < 96 && !roto_in_key(n)); notes_in_key--; }
+        while (notes_in_key < 0) { do n--; while (n > 24 && !roto_in_key(n)); notes_in_key++; }
+        n += 12 * octaves;
+        while (n > 96) n -= 12;
+        while (n < 24) n += 12;
+        st->note = (uint8_t)n;
+    }
+    v = (int32_t)st->vel + 6 * accent;
+    st->vel = (uint8_t)(v < 20 ? 20 : v > 127 ? 127 : v);
+    l = (int32_t)roto_step_len(st) + length;
+    l = l < 0 ? 0 : l > 3 ? 3 : l;
+    st->len_lo = (uint8_t)(l & 1); st->len_hi = (uint8_t)(l >> 1);
+    st->chance = 0;                                          /* (edited by hand: a real note, not a ghost) */
+    step_belongs(k, step);
+}
+
 void roto_step_toggle(uint32_t trk, uint32_t step)
 {
     roto_step_t *st;

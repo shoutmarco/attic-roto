@@ -437,6 +437,8 @@ static void rt_draw_name_centre(void)
               rt_sn.show == ROTO_SHOW_NOTSAVED ? RT_PINK : col);
 }
 
+static char rt_say_big[12], rt_say_small[16];   /* roto_ui_say's words */
+
 static void rt_draw_centre(void)
 {
     if (rt_sn.naming || rt_sn.show == ROTO_SHOW_SAVED || rt_sn.show == ROTO_SHOW_NOTSAVED || (rt_sn.show == ROTO_SHOW_GNUM && rt_sn.gnum >= 10000u)) {
@@ -449,7 +451,7 @@ static void rt_draw_centre(void)
     static const char *const RT_DSHOWN[4] = {"TIME", "FEEDBACK", "SEND", "COLOUR"};
     int dly_show = rt_sn.show >= ROTO_SHOW_DTIME && rt_sn.show <= ROTO_SHOW_DCOLOR;
     int flt_show = rt_sn.show >= ROTO_SHOW_BRIGHT && rt_sn.show <= ROTO_SHOW_DRIVE;
-    char big[8], small[16];
+    char big[12], small[16];
     uint16_t small_col = RT_GREY;
     uint32_t w;
 
@@ -466,6 +468,7 @@ static void rt_draw_centre(void)
         break;
     case ROTO_SHOW_HOLD: case ROTO_SHOW_NEW: big[0] = 'N'; big[1] = 'E'; big[2] = 'W'; big[3] = 0; break;
     case ROTO_SHOW_GNUM:   rt_fmt_u(big, rt_sn.gnum); break;
+    case ROTO_SHOW_TEXT:   { uint32_t i; for (i = 0; i < 11u && rt_say_big[i]; i++) big[i] = rt_say_big[i]; big[i] = 0; } break;
     case ROTO_SHOW_DTIME: { const char *d = roto_dtime_name(rt_sn.dtime); uint32_t i; for (i = 0; d[i] && i < 6u; i++) big[i] = d[i]; big[i] = 0; } break;
     case ROTO_SHOW_DFDBK:  rt_fmt_u(big, rt_sn.dfdbk); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
     case ROTO_SHOW_DSEND:  rt_fmt_u(big, (rt_sn.dsend * 100u + 63u) / 127u); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
@@ -487,6 +490,11 @@ static void rt_draw_centre(void)
         for (i = 0; l[i]; i++) small[i] = l[i];
         small[i] = 0;
         small_col = rt_sn.show == ROTO_SHOW_HOLD ? RT_PINK : RT_TRK_COL[rt_sn.sel];
+    } else if (rt_sn.show == ROTO_SHOW_TEXT) {
+        uint32_t i;
+        for (i = 0; i < 15u && rt_say_small[i]; i++) small[i] = rt_say_small[i];
+        small[i] = 0;
+        small_col = RT_TRK_COL[rt_sn.sel];
     } else if (rt_sn.show == ROTO_SHOW_GNUM) {
         const char *l = "GROOVE";
         uint32_t i;
@@ -1726,6 +1734,44 @@ void roto_ui_show(uint32_t what, uint32_t now_ms)
     rt_show_until = now_ms + RT_SHOW_MS;
 }
 
+void roto_ui_say(const char *big, const char *small, uint32_t now_ms)
+{
+    uint32_t i;
+    for (i = 0; i < sizeof rt_say_big - 1u && big[i]; i++) rt_say_big[i] = big[i];
+    rt_say_big[i] = 0;
+    for (i = 0; i < sizeof rt_say_small - 1u && small[i]; i++) rt_say_small[i] = small[i];
+    rt_say_small[i] = 0;
+    roto_ui_show(ROTO_SHOW_TEXT, now_ms);
+}
+
+void roto_ui_say_step(uint32_t now_ms)        /* "D#3" over "ACCENT 92  LONG" (a drum: its name) */
+{
+    static const char *const PCN[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    static const char *const LN[4] = {"", " SHORT", " LONG", " FULL"};
+    int h = roto_ui_held_step();
+    const roto_track_t *k = &roto.trk[roto.sel < ROTO_TRACKS ? roto.sel : 0];
+    const roto_step_t *st;
+    char b[12], s[16];
+    uint32_t i = 0, j;
+    if (h < 0) return;
+    st = &k->step[h];
+    if (roto.snd[k->part].eng == ROTO_ENG_DRUM) {
+        const char *n = roto_piece_name(roto_piece_of(roto.sel));
+        for (; n[i] && i < 11u; i++) b[i] = n[i];
+        b[i] = 0;
+    } else {
+        const char *n = PCN[st->note % 12u];
+        for (; n[i]; i++) b[i] = n[i];
+        rt_fmt_u(b + i, st->note / 12u - 1u);
+    }
+    for (i = 0, j = 0; "ACC "[j]; j++) s[i++] = "ACC "[j];
+    rt_fmt_u(s + i, st->vel);
+    i = rt_strlen(s);
+    for (j = 0; LN[roto_step_len(st)][j] && i < 15u; j++) s[i++] = LN[roto_step_len(st)][j];
+    s[i] = 0;
+    roto_ui_say(b, s, now_ms);
+}
+
 #define RT_BAND 8                           /* rows per strip when a big area changes */
 #define RT_HEAD_Y1 (RT_RULE_Y + 2)          /* the header: rows 0 .. RT_HEAD_Y1 - 1 */
 
@@ -1758,6 +1804,7 @@ static uint32_t rt_ring_sig(void)
     h = rt_fnv(h, rt_sn.show);
     h = rt_fnv(h, rt_sn.naming); h = rt_fnv(h, rt_sn.name_pos);
     { uint32_t c; for (c = 0; c < 8u; c++) h = rt_fnv(h, (uint8_t)rt_sn.name[c]); }
+    if (rt_sn.show == ROTO_SHOW_TEXT) { uint32_t c; for (c = 0; rt_say_big[c]; c++) h = rt_fnv(h, (uint8_t)rt_say_big[c]); for (c = 0; rt_say_small[c]; c++) h = rt_fnv(h, (uint8_t)rt_say_small[c]); }
     if (rt_sn.show) { h = rt_fnv(h, rt_sn.gnum); h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); h = rt_fnv(h, rt_sn.div); h = rt_fnv(h, rt_sn.bpm); }
     else if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); }
     if (rt_sn.view == ROTO_VIEW_ENV) { uint32_t e; for (e = 0; e < 4u; e++) h = rt_fnv(h, rt_sn.env[e]); }
@@ -1866,10 +1913,44 @@ static uint32_t rt_white_place(uint32_t k)
 }
 
 /* the white keys are the steps of the ring: 1-16, or 17-32 with OCT+ (roto.kpage). Silent (seq.c). */
-int roto_ui_input(uint32_t pressed, uint32_t notes)
+/* a held white key: its step (the selected ring), the key, whether a knob changed it */
+static uint8_t rt_hold = 0xFF, rt_hold_key, rt_hold_sel, rt_hold_used;
+
+int roto_ui_held_step(void) { return rt_hold != 0xFFu && rt_hold_sel == roto.sel ? (int)rt_hold : -1; }
+void roto_ui_hold_used(void) { rt_hold_used = 1; }
+
+int roto_ui_input(uint32_t pressed, uint32_t notes, uint32_t held)
 {
     (void)pressed;
     if (roto_in_editor) return 0;
+    if (ROTO_SIMPLE) {
+        /* white keys: press an empty step and it is on (a note that fits); hold a step and turn the knobs to edit
+         * it; tap a step that is on (no knob turned) and it goes off when you let go */
+        if (rt_hold != 0xFFu && (!((held >> rt_hold_key) & 1u) || rt_hold_sel != roto.sel)) {
+            if (!rt_hold_used && rt_hold_sel == roto.sel && roto.trk[rt_hold_sel].step[rt_hold].on)
+                roto_step_toggle(rt_hold_sel, rt_hold);
+            rt_hold = 0xFF;
+        }
+        if (notes) {
+            uint32_t k, sel = (uint32_t)roto.sel, len = roto.trk[sel].len, base = roto.kpage ? 16u : 0u;
+            for (k = 0; k < 27u; k++) {
+                uint32_t s;
+                if (!((notes >> k) & 1u)) continue;
+                if (rt_key_black(k)) {                       /* OP1..OP6: the first six black keys mute rings 1..6 */
+                    uint32_t p = 0, j;
+                    for (j = 0; j < k; j++) p += (uint32_t)rt_key_black(j);
+                    if (p < ROTO_TRACKS) roto.mute ^= (uint8_t)(1u << p);
+                    continue;
+                }
+                s = base + rt_white_place(k);
+                if (s >= len) continue;
+                rt_hold_used = !roto.trk[sel].step[s].on;   /* (a new step stays when you let go) */
+                if (!roto.trk[sel].step[s].on) roto_step_add(sel, s);
+                rt_hold = (uint8_t)s; rt_hold_key = (uint8_t)k; rt_hold_sel = (uint8_t)sel;
+            }
+        }
+        return 1;
+    }
     if (notes) {
         uint32_t k, sel = (uint32_t)roto.sel, len = roto.trk[sel].len, base = roto.kpage ? 16u : 0u;
         for (k = 0; k < 27u; k++) {
