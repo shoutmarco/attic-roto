@@ -268,6 +268,11 @@ static struct {
     uint8_t a_chord, a_mode, a_speed, a_range, a_gate, a_len, a_cur;
     uint8_t a_seq[16];
     char a_name[12];
+    uint8_t spage, s_drum, s_cat, s_idx, s_kit, s_piece, s_level;
+    int8_t s_pan;
+    int8_t ed[8];
+    char ed_lbl[8][6];
+    char ed_txt[8][7];
 } rt_sn;
 
 static void rt_snapshot(void)
@@ -299,6 +304,23 @@ static void rt_snapshot(void)
     for (s = 0; s < rt_sn.a_len; s++) rt_sn.a_seq[s] = roto.arp_seq[s];
     rt_sn.a_cur = roto.arp_cur < rt_sn.a_len && roto.arp_chord ? roto.arp_cur : 0xFFu;
     roto_arp_name(rt_sn.a_name);
+    {
+        const roto_sound_t *sd = &roto.snd[rt_sn.part];
+        uint32_t c, i, e;
+        rt_sn.spage = roto.spage <= 2u ? roto.spage : 0u;
+        rt_sn.s_drum = sd->eng == ROTO_ENG_DRUM;
+        roto_cat_find(sd->eng, sd->preset, &c, &i);
+        rt_sn.s_cat = (uint8_t)c; rt_sn.s_idx = (uint8_t)i;
+        rt_sn.s_kit = sd->kit; rt_sn.s_piece = (uint8_t)roto_piece_of(rt_sn.sel);
+        rt_sn.s_level = sd->level; rt_sn.s_pan = sd->pan;
+        for (e = 0; e < 8u; e++) {
+            rt_sn.ed[e] = roto.ed[e];
+            for (c = 0; c < 5u && roto.ed_lbl[e][c]; c++) rt_sn.ed_lbl[e][c] = roto.ed_lbl[e][c];
+            rt_sn.ed_lbl[e][c] = 0;
+            for (c = 0; c < 6u && roto.ed_txt[e][c]; c++) rt_sn.ed_txt[e][c] = roto.ed_txt[e][c];
+            rt_sn.ed_txt[e][c] = 0;
+        }
+    }
     rt_sn.hits = 0;
     for (s = 0; s < ROTO_STEPS; s++) {
         rt_sn.on[s] = (uint8_t)(s < rt_sn.len && k->step[s].on);
@@ -333,6 +355,8 @@ static void rt_draw_header(void)
         rt_text_s(x + 8, 8, "DELAY", RT_TEXT);
     } else if (rt_sn.view == ROTO_VIEW_ARP) {
         rt_text_s(x + 8, 8, rt_sn.a_chord ? "ARP" : "ARP OFF", RT_TEXT);
+    } else if (rt_sn.view == ROTO_VIEW_SND) {
+        rt_text_s(x + 8, 8, rt_sn.spage == 0u ? "SOUND" : rt_sn.spage == 1u ? "SHAPE 1/2" : "SHAPE 2/2", RT_TEXT);
     } else {
         rt_text_s(x + 8, 8, RT_DIV[rt_sn.div <= 4 ? rt_sn.div : 1], RT_TEXT);
         rt_fmt_u(buf, rt_sn.bpm);
@@ -1031,6 +1055,158 @@ static void rt_draw_arp(void)
     }
 }
 
+/* ------------------------------------------------------------- sound
+ * CHOOSE (page 0): the kinds as arcs round the outside (the one you're in lit), the
+ * sounds of that kind as dots on the ring inside (the one playing filled), its name big
+ * in the middle. Drums: the kits outside, the pieces inside, this ring's piece in the middle.
+ * SHAPE (pages 1, 2): four spokes, one per setting, the value as a point along each;
+ * the points joined make the sound's shape. A letter box at each spoke's end. */
+static void rt_arc(int32_t a0, int32_t a1, int32_t r, uint16_t c)
+{
+    int32_t a, x, y, px = 0, py = 0;
+    for (a = a0; a <= a1; a += 4) {
+        rt_polar(a, r, &x, &y);
+        if (a > a0) rt_line(px, py, x, y, c);
+        px = x; py = y;
+    }
+}
+
+static void rt_centre_text(int32_t y, const char *t, uint16_t c, int big)
+{
+    if (big) rt_text_b(RT_CX - (int32_t)rt_strlen(t) * 4, y, t, 1, c);
+    else rt_text_s(RT_CX - RT_TEXT_S_W(t) / 2, y, t, c);
+}
+
+/* the bottom: a dial's name and value while it turns (big), else the hint (small, grey) */
+static void rt_snd_bottom(const char *name, const char *val, const char *hint)
+{
+    char line[24];
+    uint32_t i = 0, k;
+    if (name) {
+        for (k = 0; name[k] && i < 10u; k++) line[i++] = name[k];
+        if (i) line[i++] = ' ';
+        for (k = 0; val[k] && i < 22u; k++) line[i++] = val[k];
+        line[i] = 0;
+        rt_centre_text(RT_H - 20, line, RT_TRK_COL[rt_sn.sel], 1);
+    } else {
+        rt_centre_text(RT_H - 13, hint, RT_GREY, 0);
+    }
+}
+
+static void rt_draw_snd_choose(void)
+{
+    uint16_t col = RT_TRK_COL[rt_sn.sel], half = RT_TRK_HALF[rt_sn.sel];
+    uint32_t nout = rt_sn.s_drum ? roto_kit_count() : roto_cat_count();
+    uint32_t cur_out = rt_sn.s_drum ? rt_sn.s_kit : rt_sn.s_cat;
+    uint32_t nin = rt_sn.s_drum ? roto_piece_count() : roto_cat_size(rt_sn.s_cat);
+    uint32_t cur_in = rt_sn.s_drum ? rt_sn.s_piece : rt_sn.s_idx, i;
+    uint32_t show = rt_sn.show >= ROTO_SHOW_S1 && rt_sn.show <= ROTO_SHOW_S4 ? rt_sn.show - ROTO_SHOW_S1 + 1u : 0u;
+    int32_t x, y;
+    char val[16];
+
+    for (i = 0; i < nout; i++) {                                 /* the kinds (kits) */
+        int32_t a0 = -256 + (int32_t)((i * 1024u) / nout) + 10, a1 = -256 + (int32_t)(((i + 1u) * 1024u) / nout) - 10;
+        rt_arc(a0, a1, 90, i == cur_out ? col : half);
+        if (i == cur_out) rt_arc(a0, a1, 87, col);
+    }
+    for (i = 0; i < nin; i++) {                                  /* the sounds (pieces) */
+        rt_polar(-256 + (int32_t)((i * 1024u) / nin), 68, &x, &y);
+        if (i == cur_in) rt_diamond_fill(x, y, 4, col);
+        else rt_diamond_line(x, y, 2, RT_LINE);
+    }
+    rt_circle(RT_CX, RT_CY, 68, RT_TRK_RING[rt_sn.sel]);
+
+    rt_centre_text(RT_CY - 26, rt_sn.s_drum ? roto_kit_name(rt_sn.s_kit) : roto_cat_name(rt_sn.s_cat), col, 0);
+    rt_centre_text(RT_CY - 10, rt_sn.s_drum ? roto_piece_name(rt_sn.s_piece) : roto.snd[rt_sn.part].name, RT_TEXT, 1);
+    rt_fmt_u(val, cur_in + 1u);
+    i = rt_strlen(val); val[i++] = ' '; val[i++] = '/'; val[i++] = ' ';
+    rt_fmt_u(val + i, nin);
+    rt_centre_text(RT_CY + 12, val, RT_GREY, 0);
+    if (rt_sn.s_drum && rt_sn.sel != 0u) rt_centre_text(RT_CY + 24, "KIT SHARED", RT_PINK, 0);
+
+    switch (show) {
+    case 1: rt_snd_bottom(rt_sn.s_drum ? "" : "KIND", rt_sn.s_drum ? roto_kit_name(rt_sn.s_kit) : roto_cat_name(rt_sn.s_cat), 0); break;
+    case 2: rt_snd_bottom(rt_sn.s_drum ? "PIECE" : "SOUND", rt_sn.s_drum ? roto_piece_name(rt_sn.s_piece) : roto.snd[rt_sn.part].name, 0); break;
+    case 3: rt_fmt_u(val, (rt_sn.s_level * 100u + 63u) / 127u); i = rt_strlen(val); val[i] = '%'; val[i + 1] = 0; rt_snd_bottom("LEVEL", val, 0); break;
+    case 4: {
+        int32_t p = rt_sn.s_pan;
+        val[0] = p < 0 ? 'L' : p > 0 ? 'R' : 'C';
+        if (p) rt_fmt_u(val + 1, (uint32_t)(p < 0 ? -p : p)); else val[1] = 0;
+        rt_snd_bottom("PAN", val, 0);
+        break;
+    }
+    default: rt_snd_bottom(0, 0, rt_sn.s_drum ? "K1 KIT  K2 PIECE  K3 LEVEL  K4 PAN" : "K1 KIND  K2 SOUND  K3 LEVEL  K4 PAN"); break;
+    }
+}
+
+static void rt_draw_snd_shape(void)
+{
+    static const int32_t ANG[4] = {640, 896, 128, 384};          /* top left, top right, bottom right, bottom left */
+    uint16_t col = RT_TRK_COL[rt_sn.sel];
+    uint32_t base = (rt_sn.spage - 1u) * 4u, k, j, i;
+    uint32_t show = rt_sn.show >= ROTO_SHOW_S1 && rt_sn.show <= ROTO_SHOW_S4 ? rt_sn.show - ROTO_SHOW_S1 + 1u : 0u;
+    int32_t px[4], py[4], x, y;
+    char let[4];
+
+    rt_circle(RT_CX, RT_CY, 30, RT_TRK_RING[rt_sn.sel]);
+    rt_circle(RT_CX, RT_CY, 56, RT_TRK_RING[rt_sn.sel]);
+    rt_circle(RT_CX, RT_CY, 82, RT_TRK_RING[rt_sn.sel]);
+    for (k = 0; k < 4u; k++) {
+        int32_t v = rt_sn.ed[base + k], r = v == -128 ? 6 : 6 + (v * 76) / 100;
+        rt_polar(ANG[k], 6, &x, &y);
+        rt_polar(ANG[k], 82, &px[k], &py[k]);
+        rt_line(x, y, px[k], py[k], show == k + 1u ? col : RT_LINE);
+        rt_polar(ANG[k], r, &px[k], &py[k]);
+    }
+    for (k = 0; k < 4u; k++) {                                   /* the shape */
+        uint32_t n = (k + 1u) % 4u;
+        if (rt_sn.ed[base + k] == -128 || rt_sn.ed[base + n] == -128) continue;
+        rt_line(px[k], py[k], px[n], py[n], col);
+    }
+    for (k = 0; k < 4u; k++)
+        if (rt_sn.ed[base + k] != -128) rt_diamond_fill(px[k], py[k], show == k + 1u ? 4 : 3, show == k + 1u ? RT_TEXT : col);
+
+    for (k = 0; k < 4u; k++) {                                   /* the letters: first, or next free */
+        const char *l = rt_sn.ed_lbl[base + k];
+        let[k] = l[0] ? l[0] : '-';
+        for (i = 0; l[i]; i++) {
+            int taken = 0;
+            for (j = 0; j < k; j++) taken |= let[j] == l[i];
+            if (!taken) { let[k] = l[i]; break; }
+        }
+        rt_polar(ANG[k], 94, &x, &y);
+        {
+            char t[2] = {let[k], 0};
+            int hot = show == k + 1u;
+            uint16_t c = rt_sn.ed[base + k] == -128 ? RT_DOT : hot ? col : RT_GREY;
+            rt_rect(x - 5, y - 6, x + 6, y + 7, hot ? col : RT_BG);
+            if (!hot) {
+                rt_hspan(x - 5, x + 6, y - 6, c); rt_hspan(x - 5, x + 6, y + 6, c);
+                rt_rect(x - 5, y - 6, x - 4, y + 7, c); rt_rect(x + 5, y - 6, x + 6, y + 7, c);
+            }
+            rt_text_s(x - 2, y - 3, t, hot ? RT_BG : c);
+        }
+    }
+    if (show) rt_snd_bottom(rt_sn.ed_lbl[base + show - 1u], rt_sn.ed_txt[base + show - 1u], 0);
+    else {
+        char line[40];
+        uint32_t n = 0, c;
+        for (k = 0; k < 4u; k++) {
+            if (k) line[n++] = ' ';
+            for (c = 0; rt_sn.ed_lbl[base + k][c] && c < 5u; c++) line[n++] = rt_sn.ed_lbl[base + k][c];
+            if (!c) line[n++] = '-';
+        }
+        line[n] = 0;
+        rt_snd_bottom(0, 0, line);
+    }
+}
+
+static void rt_draw_snd(void)
+{
+    if (rt_sn.spage) rt_draw_snd_shape();
+    else rt_draw_snd_choose();
+}
+
 /* ------------------------------------------------------------- delay
  * A clock face: one turn is a bar, 16 ticks for its 1/16s. The pink dot at the
  * top is a hit; the white dots after it are its echoes, as far apart as the
@@ -1109,6 +1285,7 @@ static void rt_draw_scene(void)
     else if (rt_sn.view == ROTO_VIEW_FLT) rt_draw_flt();
     else if (rt_sn.view == ROTO_VIEW_DLY) rt_draw_dly();
     else if (rt_sn.view == ROTO_VIEW_ARP) rt_draw_arp();
+    else if (rt_sn.view == ROTO_VIEW_SND) rt_draw_snd();
     else rt_draw_ring();
 }
 
@@ -1198,6 +1375,7 @@ static uint32_t rt_head_sig(void)
     h = rt_fnv(h, rt_sn.view);
     if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.hits); h = rt_fnv(h, rt_sn.len); }
     if (rt_sn.view == ROTO_VIEW_ARP) h = rt_fnv(h, rt_sn.a_chord != 0u);
+    if (rt_sn.view == ROTO_VIEW_SND) h = rt_fnv(h, rt_sn.spage);
     for (s = 0; s < sizeof roto.snd[0].name && roto.snd[rt_sn.part].name[s]; s++)
         h = rt_fnv(h, (uint8_t)roto.snd[rt_sn.part].name[s]);
     return h;
@@ -1215,6 +1393,17 @@ static uint32_t rt_ring_sig(void)
     else if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); }
     if (rt_sn.view == ROTO_VIEW_ENV) { uint32_t e; for (e = 0; e < 4u; e++) h = rt_fnv(h, rt_sn.env[e]); }
     if (rt_sn.view == ROTO_VIEW_DLY) { h = rt_fnv(h, rt_sn.dtime); h = rt_fnv(h, rt_sn.dfdbk); h = rt_fnv(h, rt_sn.dcolor); h = rt_fnv(h, rt_sn.dsend); }
+    if (rt_sn.view == ROTO_VIEW_SND) {
+        uint32_t e, c;
+        h = rt_fnv(h, rt_sn.spage); h = rt_fnv(h, rt_sn.s_cat); h = rt_fnv(h, rt_sn.s_idx); h = rt_fnv(h, rt_sn.s_kit);
+        h = rt_fnv(h, rt_sn.s_piece); h = rt_fnv(h, rt_sn.s_level); h = rt_fnv(h, (uint8_t)rt_sn.s_pan); h = rt_fnv(h, rt_sn.s_drum);
+        for (c = 0; roto.snd[rt_sn.part].name[c] && c < sizeof roto.snd[0].name; c++) h = rt_fnv(h, (uint8_t)roto.snd[rt_sn.part].name[c]);
+        for (e = 0; e < 8u; e++) {
+            h = rt_fnv(h, (uint8_t)rt_sn.ed[e]);
+            for (c = 0; rt_sn.ed_lbl[e][c]; c++) h = rt_fnv(h, (uint8_t)rt_sn.ed_lbl[e][c]);
+            for (c = 0; rt_sn.ed_txt[e][c]; c++) h = rt_fnv(h, (uint8_t)rt_sn.ed_txt[e][c]);
+        }
+    }
     if (rt_sn.view == ROTO_VIEW_ARP) {
         h = rt_fnv(h, rt_sn.a_chord); h = rt_fnv(h, rt_sn.a_mode); h = rt_fnv(h, rt_sn.a_speed);
         h = rt_fnv(h, rt_sn.a_range); h = rt_fnv(h, rt_sn.a_gate); h = rt_fnv(h, rt_sn.a_len);
@@ -1256,7 +1445,7 @@ int roto_ui_draw(int force, uint32_t now_ms)
             rt_repaint_rows(0, RT_HEAD_Y1);             /* the header only (K4) */
         else if (rt_sn.bpm != rt_shown_bpm && rt_sn.view == ROTO_VIEW_RING)
             rt_repaint(RT_BPM_X1 - 50, 4, RT_BPM_X1 + 1, 17);
-        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos && rt_sn.view != ROTO_VIEW_ENV && rt_sn.view != ROTO_VIEW_FLT && rt_sn.view != ROTO_VIEW_DLY && rt_sn.view != ROTO_VIEW_ARP) {
+        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos && rt_sn.view != ROTO_VIEW_ENV && rt_sn.view != ROTO_VIEW_FLT && rt_sn.view != ROTO_VIEW_DLY && rt_sn.view != ROTO_VIEW_ARP && rt_sn.view != ROTO_VIEW_SND) {
             int32_t x0, y0, x1, y1;
             rt_playhead_box(rt_shown_pos < rt_sn.len ? rt_shown_pos : 0, rt_sn.len, &x0, &y0, &x1, &y1);
             rt_repaint(x0, y0, x1, y1);
@@ -1295,18 +1484,47 @@ int roto_ui_draw(int force, uint32_t now_ms)
 
 /* ------------------------------------------------------------- input
  * (stage 3 will rework the controls; this keeps the step keys working) */
+/* the 27 keys from F: black or white, and a white key's place (0..15) */
+static int rt_key_black(uint32_t k) { return (int)((0x54Au >> ((k + 5u) % 12u)) & 1u); }
+static uint32_t rt_white_place(uint32_t k)
+{
+    uint32_t i, n = 0;
+    for (i = 0; i < k; i++) n += (uint32_t)!rt_key_black(i);
+    return n;
+}
+
+/* the white keys are the steps of the ring: 1-16, or 17-32 with OCT+ (roto.kpage). Silent (seq.c). */
 int roto_ui_input(uint32_t pressed, uint32_t notes)
 {
     (void)pressed;
     if (roto_in_editor) return 0;
     if (notes && roto.view != ROTO_VIEW_ARP) {
-        uint32_t s, sel = (uint32_t)roto.sel;
-        uint32_t maxs = (uint32_t)roto.trk[sel].len;
-        if (maxs > 16u) maxs = 16u;
-        for (s = 0; s < maxs; s++)
-            if ((notes >> s) & 1u) roto_step_toggle(sel, s);
+        uint32_t k, sel = (uint32_t)roto.sel, len = roto.trk[sel].len, base = roto.kpage ? 16u : 0u;
+        for (k = 0; k < 27u; k++) {
+            uint32_t s;
+            if (!((notes >> k) & 1u) || rt_key_black(k)) continue;
+            s = base + rt_white_place(k);
+            if (s < len) roto_step_toggle(sel, s);
+        }
     }
     return 1;
+}
+
+uint32_t roto_key_leds(void)
+{
+    const roto_track_t *k = &roto.trk[roto.sel < ROTO_TRACKS ? roto.sel : 0];
+    uint32_t key, m = 0, base = roto.kpage ? 16u : 0u, len = k->len;
+    if (roto_in_editor) return 0;
+    for (key = 0; key < 27u; key++) {
+        uint32_t s, on;
+        if (rt_key_black(key)) continue;
+        s = base + rt_white_place(key);
+        if (s >= len) continue;
+        on = k->step[s].on;
+        if (roto.running && k->pos == s) on = !on;           /* (the running light) */
+        if (on) m |= 1u << key;
+    }
+    return m;
 }
 
 void roto_ui_audio_level(uint8_t level)

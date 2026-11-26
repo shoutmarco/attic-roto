@@ -780,6 +780,81 @@ uint32_t roto_dtime_step(uint32_t t, int32_t dir)
     return DT_ORDER[at];
 }
 
+/* ------------------------------------------------------------- SOUND (UI side) */
+typedef struct { const char *name; uint8_t n; const uint8_t (*s)[2]; } roto_cat_t;
+static const uint8_t RCAT_BASS[][2]  = {{0, 7}, {6, 0}, {0, 2}, {0, 4}, {12, 2}, {3, 1}, {5, 2}};
+static const uint8_t RCAT_SYNTH[][2] = {{0, 0}, {6, 2}, {6, 1}, {0, 6}, {3, 0}, {3, 3}, {3, 4}, {3, 2}, {0, 9}, {2, 0}, {12, 3}, {5, 1}};
+static const uint8_t RCAT_KEYS[][2]  = {{12, 0}, {0, 5}, {4, 0}, {7, 0}, {7, 1}, {7, 2}, {7, 4}, {2, 1}, {12, 6}};
+static const uint8_t RCAT_PAD[][2]   = {{0, 1}, {0, 3}, {0, 11}, {2, 2}, {12, 4}, {5, 0}, {5, 3}, {6, 4}, {8, 0}, {8, 2}, {8, 3}, {9, 7}};
+static const uint8_t RCAT_PLUCK[][2] = {{0, 8}, {12, 7}, {9, 2}, {9, 8}, {9, 4}, {9, 1}, {12, 5}, {12, 1}, {9, 0}, {6, 3}, {2, 4}, {2, 3}, {2, 5}, {9, 3}};
+static const uint8_t RCAT_WIND[][2]  = {{7, 3}, {4, 2}, {4, 3}, {0, 10}};
+static const uint8_t RCAT_PERC[][2]  = {{9, 5}, {9, 6}};
+static const uint8_t RCAT_FX[][2]    = {{11, 0}, {11, 1}, {11, 2}, {11, 3}, {8, 1}, {13, 0}, {13, 1}};
+#define RCAT(nm, a) {nm, (uint8_t)(sizeof a / sizeof a[0]), a}
+static const roto_cat_t ROTO_CATS[] = {
+    RCAT("BASS", RCAT_BASS), RCAT("SYNTH", RCAT_SYNTH), RCAT("KEYS", RCAT_KEYS), RCAT("PAD", RCAT_PAD),
+    RCAT("PLUCK", RCAT_PLUCK), RCAT("WIND", RCAT_WIND), RCAT("PERC", RCAT_PERC), RCAT("FX", RCAT_FX),
+};
+#define RNCAT ((uint32_t)(sizeof ROTO_CATS / sizeof ROTO_CATS[0]))
+
+uint32_t roto_cat_count(void) { return RNCAT; }
+const char *roto_cat_name(uint32_t c) { return ROTO_CATS[c % RNCAT].name; }
+uint32_t roto_cat_size(uint32_t c) { return ROTO_CATS[c % RNCAT].n; }
+void roto_cat_sound(uint32_t c, uint32_t i, uint8_t *eng, uint8_t *preset)
+{
+    const roto_cat_t *k = &ROTO_CATS[c % RNCAT];
+    *eng = k->s[i % k->n][0];
+    *preset = k->s[i % k->n][1];
+}
+void roto_cat_find(uint32_t eng, uint32_t preset, uint32_t *c, uint32_t *i)
+{
+    uint32_t a, b;
+    for (a = 0; a < RNCAT; a++)
+        for (b = 0; b < ROTO_CATS[a].n; b++)
+            if (ROTO_CATS[a].s[b][0] == eng && ROTO_CATS[a].s[b][1] == preset) { *c = a; *i = b; return; }
+    *c = 0; *i = 0;
+}
+
+/* the kits: Felucca's STD, the drum-machine models (KIT 80 10 66 55 77), DEEP TIGHT PERC */
+static const char *const KIT_NAME[9] = {"STD KIT", "80 KIT", "10 KIT", "66 KIT", "55 KIT", "77 KIT", "DEEP KIT", "TIGHT KIT", "PERC KIT"};
+static const uint8_t KIT_PRESET[9] = {0, 0, 0, 0, 0, 0, 1, 2, 3};
+static const int8_t KIT_VAL[9] = {-1, 4, 5, 6, 7, 8, -1, -1, -1};
+uint32_t roto_kit_count(void) { return 9u; }
+const char *roto_kit_name(uint32_t k) { return KIT_NAME[k % 9u]; }
+void roto_kit_sound(uint32_t k, uint8_t *preset, int32_t *kitval) { *preset = KIT_PRESET[k % 9u]; *kitval = KIT_VAL[k % 9u]; }
+
+/* the pieces a drum ring can play (General MIDI notes: the STD kit has them all; a model kit plays its own
+ * piece in the same lane) */
+static const char *const PIECE_NAME[14] = {"KICK", "SNARE", "CLAP", "CL HAT", "OP HAT", "RIM", "TOM", "CONGA",
+                                           "LO CONGA", "BONGO", "CLAVE", "SHAKER", "COWBELL", "CYMBAL"};
+static const uint8_t PIECE_NOTE[14] = {36, 38, 39, 42, 46, 37, 45, 63, 64, 60, 75, 70, 56, 49};
+uint32_t roto_piece_count(void) { return 14u; }
+const char *roto_piece_name(uint32_t p) { return PIECE_NAME[p % 14u]; }
+
+static uint32_t ring_main_note(const roto_track_t *k)
+{
+    uint32_t s;
+    for (s = 0; s < k->len; s++) if (k->step[s].on) return k->step[s].note;
+    return k->fill_note;
+}
+uint32_t roto_piece_of(uint32_t ring)
+{
+    uint32_t n = ring_main_note(&roto.trk[ring % ROTO_TRACKS]), p;
+    for (p = 0; p < 14u; p++) if (PIECE_NOTE[p] == n) return p;
+    for (p = 0; p < 14u; p++) if (n == 62u && PIECE_NOTE[p] == 63u) return p;   /* (a muted conga: CONGA) */
+    return 0;
+}
+void roto_piece_set(uint32_t ring, uint32_t p)
+{
+    roto_track_t *k = &roto.trk[ring % ROTO_TRACKS];
+    uint32_t from = ring_main_note(k), to = PIECE_NOTE[p % 14u], s;
+    for (s = 0; s < ROTO_STEPS; s++) {
+        if (k->step[s].on && k->step[s].note == from) k->step[s].note = (uint8_t)to;
+        if (k->home[s].on && k->home[s].note == from) k->home[s].note = (uint8_t)to;
+    }
+    if (k->fill_note == from || !ring_hits(k)) k->fill_note = (uint8_t)to;
+}
+
 /* ------------------------------------------------------------- ARP (UI side) */
 static const uint8_t RARP_DEG[7] = {0, 3, 4, 5, 2, 6, 1};   /* i, iv, v, VI, III, VII, ii */
 

@@ -51,6 +51,7 @@ typedef struct {
     uint8_t eng, preset;
     uint8_t level, dly, rev, chor;
     int8_t  pan;
+    uint8_t kit;         /* DRUM: ROTO_KITS index (the kit's KIT setting over its preset) */
     char    name[12];    /* the preset's name, filled in when applied */
 } roto_sound_t;
 
@@ -79,6 +80,11 @@ typedef struct {
     char     flt_lbl[ROTO_PARTS][4][6];   /* the sound's own names for them ("CUT", "RES", ...) */
     /* ARP: a chord from the pattern's key, played one note at a time on a ring's sound.
      * UI side sets these (then roto_arp_build); it keeps playing when you leave the screen. */
+    uint8_t  spage;      /* SOUND screen: 0 choose, 1 shape 1-4, 2 shape 5-8 */
+    int8_t   ed[8];      /* SHAPE: the sound's eight settings 0..100 (-128: none), for the screen (ui_input.c fills it) */
+    char     ed_lbl[8][6];   /* their names */
+    char     ed_txt[8][7];   /* their values as text ("64%", "SAW") */
+    uint8_t  kpage;      /* the step keys show steps 1-16 (0) or 17-32 (1): OCT- / OCT+ */
     uint8_t  arp_chord;  /* 0: off; 1..7: the key's seventh chords (i, iv, v, VI, III, VII, ii) */
     uint8_t  arp_mode;   /* ROTO_ARP_UP .. ROTO_ARP_PEDAL */
     uint8_t  arp_speed;  /* 0 1/32, 1 1/16, 2 1/8, 3 1/4 */
@@ -110,6 +116,7 @@ typedef struct {
 #define ROTO_VIEW_FLT    3
 #define ROTO_VIEW_DLY    4
 #define ROTO_VIEW_ARP    5
+#define ROTO_VIEW_SND    6
 
 /* what a knob just changed, for roto_ui_show() (the centre shows it for a moment) */
 enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_SHOW_RATE, ROTO_SHOW_PROB, ROTO_SHOW_BPM,
@@ -117,7 +124,8 @@ enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_
        ROTO_SHOW_BRIGHT, ROTO_SHOW_EDGE, ROTO_SHOW_FENV, ROTO_SHOW_DRIVE,
        ROTO_SHOW_DTIME, ROTO_SHOW_DFDBK, ROTO_SHOW_DSEND, ROTO_SHOW_DCOLOR,
        ROTO_SHOW_HOLD, ROTO_SHOW_NEW,
-       ROTO_SHOW_ACHORD, ROTO_SHOW_AMODE, ROTO_SHOW_ASPEED, ROTO_SHOW_ARANGE, ROTO_SHOW_ALEN };
+       ROTO_SHOW_ACHORD, ROTO_SHOW_AMODE, ROTO_SHOW_ASPEED, ROTO_SHOW_ARANGE, ROTO_SHOW_ALEN,
+       ROTO_SHOW_S1, ROTO_SHOW_S2, ROTO_SHOW_S3, ROTO_SHOW_S4 };   /* SOUND: K1..K4 (the page says which) */
 
 extern roto_seq_t roto;
 
@@ -151,6 +159,23 @@ const char *roto_dtime_name(uint32_t t);
 uint32_t roto_dtime_96(uint32_t t);
 uint32_t roto_dtime_step(uint32_t t, int32_t dir);
 
+/* SOUND: the sounds by kind. Pitched: categories of (engine, preset); drums: kits and pieces. */
+#define ROTO_ENG_DRUM 10u
+uint32_t roto_cat_count(void);
+const char *roto_cat_name(uint32_t c);
+uint32_t roto_cat_size(uint32_t c);
+void roto_cat_sound(uint32_t c, uint32_t i, uint8_t *eng, uint8_t *preset);
+void roto_cat_find(uint32_t eng, uint32_t preset, uint32_t *c, uint32_t *i);   /* (not listed: 0, 0) */
+uint32_t roto_kit_count(void);
+const char *roto_kit_name(uint32_t k);
+void roto_kit_sound(uint32_t k, uint8_t *preset, int32_t *kitval);   /* kitval: the KIT setting (-1: the preset's own) */
+uint32_t roto_piece_count(void);
+const char *roto_piece_name(uint32_t p);
+uint32_t roto_piece_of(uint32_t ring);       /* the ring's main piece (its first hit's), index */
+void roto_piece_set(uint32_t ring, uint32_t p);   /* the ring's main piece becomes p (its hits, FILL's note, home) */
+/* (main.c) give part t the sound in roto.snd[t] */
+void roto_apply_part(uint32_t t);
+
 /* ARP (UI side): arp_seq from the chord, the key and the range; and the chord's name ("A MIN7") */
 void roto_arp_build(void);
 void roto_arp_name(char *out);
@@ -171,5 +196,6 @@ int  roto_ui_draw(int force, uint32_t now_ms);   /* returns 1 if the screen is o
 void roto_ui_show(uint32_t what, uint32_t now_ms);   /* a knob turned: show its value in the centre for a moment */
 void roto_ui_audio_level(uint8_t level);
 void roto_ui_splash(void);                       /* the power-on screen */
+uint32_t roto_key_leds(void);                    /* the keys lit: the ring's steps, the playhead's key flipped (bit k: key k of 27) */
 
 #endif /* ROTO_SEQ_H */

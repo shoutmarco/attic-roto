@@ -116,10 +116,10 @@ static void roto_boot(void)
 
 /* the tracks get roto.snd[] (the firmware's own preset loader), the song roto's tempo
  * and delay (the colour stays as it was). At power-on and on NEW. */
-void roto_apply_sounds(void)
+void roto_apply_part(uint32_t t)
 {
-    uint32_t i, t;
-    for (t = 0; t < ROTO_PARTS && t < NTRK; t++) {
+    uint32_t i;
+    if (t < ROTO_PARTS && t < NTRK) {
         track_t *tk = &trk[t];
         roto_sound_t *sd = &roto.snd[t];
         const engine_t *e;
@@ -134,10 +134,23 @@ void roto_apply_sounds(void)
         tk->p[P_CHOR] = sd->chor;
         e = ENGINES[tk->eng_req % NENGINES];
         nm = e->npresets ? e->presets[tk->preset % e->npresets].name : e->name;
+        if (sd->eng == ROTO_ENG_DRUM) {                       /* a drum kit: its KIT over the preset, its own name */
+            uint8_t pr;
+            int32_t kv;
+            roto_kit_sound(sd->kit, &pr, &kv);
+            if (kv >= 0) tk->p[P_E0] = (int16_t)kv;
+            nm = roto_kit_name(sd->kit);
+        }
         for (i = 0; i + 1u < sizeof sd->name && nm[i]; i++)
             sd->name[i] = nm[i];
         sd->name[i] = 0;
     }
+}
+
+void roto_apply_sounds(void)
+{
+    uint32_t t;
+    for (t = 0; t < ROTO_PARTS && t < NTRK; t++) roto_apply_part(t);
     song.g[G_BPM] = roto.bpm;                 /* (the delay follows the tempo) */
     song.g[G_DTIME] = roto.dtime;
     song.g[G_DFDBK] = roto.dfdbk;

@@ -416,7 +416,7 @@ static void ui_leds(void)
         ready = 1;
     }
     (void)fam;                                          /* attic-roto: the lit button is the screen you're on */
-    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : roto.view == ROTO_VIEW_DLY ? B_FX : roto.view == ROTO_VIEW_ARP ? B_ARP : B_HOME], 1);
+    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : roto.view == ROTO_VIEW_DLY ? B_FX : roto.view == ROTO_VIEW_ARP ? B_ARP : roto.view == ROTO_VIEW_SND ? B_LFO : B_HOME], 1);
     if ((k = arp_led()) != 2u && (!ui.layer || layer_btn() != B_ARP))
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3]))
@@ -430,6 +430,8 @@ static void ui_leds(void)
     led_put(nb, panel.btn[B_OCTUP], (int)(k & OCT_BREATH));
     led_put(nb, panel.btn[B_OCTDN], (k & OCT_BREATH_DN) != 0u);
     c = key_leds(&br);
+    if (!ui.menu) { c = roto_key_leds(); br = 0; }            /* attic-roto: the ring's steps on the white keys */
+    led_put(nl, panel.btn[B_OCTUP], roto.kpage != 0u);       /* (OCT+ lit: the keys show steps 17-32) */
     g = !keys_map ? 0u : grid_on() && !ui.layer && !name_on() ? grid_glow() : 0u;   /* (key_leds: the grid's map) */
     beat = g ? grid_beats() & ~c : 0u;                  /* (the grid's empty beat starts: brighter than the glow) */
     sc = keys_map ? 0u : scale_leds(&sr);               /* SCALE LEDS: the scale's keys glow, the root's brighter */
@@ -1572,6 +1574,93 @@ static void ui_input(void)
             }
         }
     }
+    {   /* SOUND (LFO): the selected ring's sound. Page 0 chooses it: K1 the kind (drums: the KIT), K2 the
+         * sound (drums: this ring's PIECE), K3 LEVEL, K4 PAN; pages 1 and 2 shape it: its own eight settings.
+         * The eight are mirrored for the screen every frame (roto.ed, ed_lbl, ed_txt). */
+        uint32_t ring = roto.sel < ROTO_TRACKS ? roto.sel : 0u, part = roto.trk[ring].part, e;
+        if (part < ROTO_PARTS && part < NTRK) {
+            track_t *tk = &trk[part];
+            roto_sound_t *sd = &roto.snd[part];
+            const engine_t *en = ENGINES[tk->eng_req % NENGINES];
+            int32_t v;
+            for (e = 0; e < 8u; e++) {
+                const param_desc_t *pd = &en->edit[e];
+                const char *l = pd->label ? pd->label : "";
+                uint32_t c;
+                for (c = 0; c < 5u && l[c]; c++) roto.ed_lbl[e][c] = l[c];
+                roto.ed_lbl[e][c] = 0;
+                if (!pd->label || pd->max <= pd->min) { roto.ed[e] = -128; roto.ed_txt[e][0] = '-'; roto.ed_txt[e][1] = 0; continue; }
+                v = tk->p[P_E0 + e];
+                roto.ed[e] = (int8_t)clamp(((v - pd->min) * 100) / (pd->max - pd->min), 0, 100);
+                if (pd->fmt == F_ENUM && pd->names && pd->names[clamp(v - pd->min, 0, pd->max - pd->min)]) {
+                    const char *n = pd->names[clamp(v - pd->min, 0, pd->max - pd->min)];
+                    for (c = 0; c < 6u && n[c]; c++) roto.ed_txt[e][c] = n[c];
+                    roto.ed_txt[e][c] = 0;
+                } else {
+                    uint32_t pct = (uint32_t)roto.ed[e];
+                    c = 0;
+                    if (pct >= 100u) roto.ed_txt[e][c++] = '1';
+                    if (pct >= 10u) roto.ed_txt[e][c++] = (char)('0' + (pct / 10u) % 10u);
+                    roto.ed_txt[e][c++] = (char)('0' + pct % 10u);
+                    roto.ed_txt[e][c++] = '%';
+                    roto.ed_txt[e][c] = 0;
+                }
+            }
+            if (roto.view == ROTO_VIEW_SND) {
+                int drum = sd->eng == ROTO_ENG_DRUM;
+                if (roto.spage == 0u) {
+                    uint32_t c, i;
+                    roto_cat_find(sd->eng, sd->preset, &c, &i);
+                    if ((v = panel_enc(EN_K1)) != 0) {
+                        if (drum) {
+                            uint8_t pr;
+                            int32_t kv;
+                            sd->kit = (uint8_t)clamp((int32_t)sd->kit + v, 0, (int32_t)roto_kit_count() - 1);
+                            roto_kit_sound(sd->kit, &pr, &kv);
+                            sd->preset = pr;
+                        } else {
+                            c = (uint32_t)clamp((int32_t)c + v, 0, (int32_t)roto_cat_count() - 1);
+                            roto_cat_sound(c, 0, &sd->eng, &sd->preset);
+                        }
+                        roto_apply_part(part);
+                        roto_ui_show(ROTO_SHOW_S1, fm1_ms);
+                    }
+                    if ((v = panel_enc(EN_K2)) != 0) {
+                        if (drum) {
+                            roto_piece_set(ring, (uint32_t)clamp((int32_t)roto_piece_of(ring) + v, 0, (int32_t)roto_piece_count() - 1));
+                        } else {
+                            i = (uint32_t)clamp((int32_t)i + v, 0, (int32_t)roto_cat_size(c) - 1);
+                            roto_cat_sound(c, i, &sd->eng, &sd->preset);
+                            roto_apply_part(part);
+                        }
+                        roto_ui_show(ROTO_SHOW_S2, fm1_ms);
+                    }
+                    if ((v = panel_enc(EN_K3)) != 0) {
+                        sd->level = (uint8_t)clamp((int32_t)sd->level + v, 0, 127);
+                        tk->p[P_LEVEL] = sd->level;
+                        roto_ui_show(ROTO_SHOW_S3, fm1_ms);
+                    }
+                    if ((v = panel_enc(EN_K4)) != 0) {
+                        sd->pan = (int8_t)clamp((int32_t)sd->pan + v * 2, -64, 63);
+                        tk->p[P_PAN] = sd->pan;
+                        roto_ui_show(ROTO_SHOW_S4, fm1_ms);
+                    }
+                } else {
+                    for (e = 0; e < 4u; e++) {
+                        uint32_t m = (roto.spage - 1u) * 4u + e;
+                        const param_desc_t *pd = &en->edit[m];
+                        int32_t step;
+                        if ((v = panel_enc(EN_K1 + (int32_t)e)) == 0) continue;
+                        if (m < 8u && pd->label && pd->max > pd->min) {
+                            step = pd->fmt == F_ENUM ? 1 : (pd->max - pd->min) / 64;
+                            tk->p[P_E0 + m] = (int16_t)clamp(tk->p[P_E0 + m] + v * (step ? step : 1), pd->min, pd->max);
+                        }
+                        roto_ui_show(ROTO_SHOW_S1 + e, fm1_ms);
+                    }
+                }
+            }
+        }
+    }
     if (roto.view == ROTO_VIEW_ARP) {   /* ARP: K1 CHORD (fully left: off), K2 MODE, K3 SPEED (right: faster),
                                          * K4 RANGE; PRESETS the NOTE LENGTH. Taken here: the ring knobs see nothing. */
         int32_t v;
@@ -1716,6 +1805,11 @@ static void ui_input(void)
         roto.view = roto.view == ROTO_VIEW_DLY ? ROTO_VIEW_RING : ROTO_VIEW_DLY;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
+    if (pressed & (1u << panel.btn[B_LFO])) {               /* LFO: the SOUND screen (choose), again: shape 1-4, 5-8, back to the ring */
+        if (roto.view != ROTO_VIEW_SND) { roto.view = ROTO_VIEW_SND; roto.spage = 0; }
+        else if (++roto.spage > 2u) { roto.view = ROTO_VIEW_RING; roto.spage = 0; }
+        roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
+    }
     if (pressed & (1u << panel.btn[B_ARP])) {               /* ARP: the arp, on this ring's sound; it starts if off (again: back to the ring) */
         if (roto.view == ROTO_VIEW_ARP) roto.view = ROTO_VIEW_RING;
         else {
@@ -1763,6 +1857,11 @@ static void ui_input(void)
         roto.view = ROTO_VIEW_RING;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
+
+    /* attic-roto: OCT+ / OCT-: the step keys show steps 17-32 / 1-16 (rings longer than 16) */
+    if (pressed & (1u << panel.btn[B_OCTUP])) roto.kpage = roto.trk[roto.sel].len > 16u;
+    if (pressed & (1u << panel.btn[B_OCTDN])) roto.kpage = 0;
+    if (roto.kpage && roto.trk[roto.sel].len <= 16u) roto.kpage = 0;
 
     /* attic-roto: transport buttons */
     if (pressed & (1u << panel.btn[B_PLAY])) {
