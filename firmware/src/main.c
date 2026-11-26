@@ -109,7 +109,7 @@ static void roto_boot(void)
     for (i = 0; i < (uint32_t)(sizeof felucca_dbg / 4u); i++)
         seed = (seed ^ w[i]) * 16777619u;
     seed ^= fm1_ms * 0x85EBCA6Bu;
-    roto_seq_generate(seed);
+    roto_seq_generate(seed % ROTO_GROOVES + 1u);         /* (a number PRESETS can dial back to) */
     roto_apply_sounds();
     roto_play();
 }
