@@ -42,6 +42,10 @@ void roto_seq_init(void)
         roto.trk[t].div = 1;
         roto.trk[t].gate = 50;
         roto.trk[t].prob = 100;
+        roto.trk[t].a_on = 0xFF;
+        roto.trk[t].arp_rate = 1;
+        roto.trk[t].arp_range = 1;
+        roto.trk[t].arp_len = 50;
     }
     roto.dub = 50;
     roto.save_cur = 0xFF;
@@ -328,18 +332,115 @@ static uint32_t audio_dice(uint32_t n)
 
 static uint32_t roto_sr = 44100u;           /* (the tick's sample rate, for the lag) */
 
+static uint32_t roto_six = 5512u;           /* (a 1/16 in samples, for the arp) */
+
+/* -------- ARP: each hit of a ring rolls out, one note at a time, until its next hit */
+static void rarp_off(roto_track_t *k)
+{
+    if (k->a_on != 0xFFu) roto_note_off(k->part, k->a_on);
+    k->a_on = 0xFF;
+    k->a_gate_left = 0;
+}
+
+static void rarp_stop(roto_track_t *k)
+{
+    rarp_off(k);
+    k->a_n = 0;
+}
+
+static void rarp_play(roto_track_t *k)
+{
+    uint32_t g;
+    rarp_off(k);
+    k->a_on = k->a_notes[k->a_idx < k->a_n ? k->a_idx : 0u];
+    roto_note_on(k->part, k->a_on, k->a_vel);
+    g = (k->a_int * (k->arp_len ? k->arp_len : 50u)) / 100u;
+    k->a_gate_left = g ? g : 1u;
+    k->a_left = k->a_int ? k->a_int : 1u;
+}
+
+static void rarp_next(roto_track_t *k)
+{
+    uint32_t n = k->a_n, i = k->a_idx;
+    if (!n) return;
+    switch (k->arp) {
+    case ROTO_ARP_DOWN:   i = i ? i - 1u : n - 1u; break;
+    case ROTO_ARP_UPDOWN:
+        if (n < 2u) { i = 0; break; }
+        if (!k->a_dir) { if (i + 1u >= n) { k->a_dir = 1; i = n - 2u; } else i++; }
+        else           { if (!i) { k->a_dir = 0; i = 1; } else i--; }
+        break;
+    case ROTO_ARP_RANDOM: { uint32_t j = audio_dice(n); i = (j == i && n > 1u) ? (j + 1u) % n : j; } break;
+    case ROTO_ARP_PEDAL:
+        if (i || n < 2u) i = 0;
+        else { k->a_k = (uint8_t)(k->a_k % (n - 1u) + 1u); i = k->a_k; }
+        break;
+    default:              i = (i + 1u) % n; break;
+    }
+    k->a_idx = (uint8_t)i;
+    k->a_vel = (uint8_t)((k->a_vel * 7u) / 8u < 40u ? 40u : (k->a_vel * 7u) / 8u);   /* (each a touch softer) */
+    rarp_play(k);
+}
+
+/* the notes a hit rolls through: its chord (the ring's), or the key's seventh chord on it; a drum: itself (a roll) */
+static void rarp_start(roto_track_t *k, uint32_t note, uint32_t vel)
+{
+    static const uint8_t SP[3] = {1, 2, 4};              /* 1/32s per note */
+    uint8_t s[16];
+    uint32_t n = 0, o, j, r = k->arp_range < 1u ? 1u : k->arp_range > 3u ? 3u : k->arp_range;
+    if (roto.snd[k->part].eng == ROTO_ENG_DRUM) {
+        s[n++] = (uint8_t)note;
+    } else {
+        int32_t iv[4] = {0, 0, 0, 0};
+        uint32_t m = 1;
+        for (j = 0; j < ROTO_CHORD; j++) if (k->chord[j] > 0) iv[m++] = k->chord[j];
+        if (m == 1u) {                                    /* no chord of its own: the key's, built on this note */
+            const uint8_t *sc = MODE_SC[roto.mode % 3u];
+            uint32_t pc = (note + 120u - roto.root) % 12u, d = 0;
+            for (j = 0; j < 7u; j++) if (sc[j] == pc) d = j + 1u;
+            if (d) {
+                d--;
+                for (j = 1; j < 4u; j++) { uint32_t g = d + 2u * j; iv[j] = (int32_t)(sc[g % 7u] + 12u * (g / 7u)) - (int32_t)sc[d]; }
+            } else { iv[1] = 3; iv[2] = 7; iv[3] = 10; }
+            m = 4;
+        }
+        for (o = 0; o < r; o++)
+            for (j = 0; j < m && n < 16u; j++) {
+                int32_t x = (int32_t)note + iv[j] + 12 * (int32_t)o;
+                s[n++] = (uint8_t)(x > 120 ? 120 : x);
+            }
+    }
+    rarp_off(k);
+    for (j = 0; j < n; j++) k->a_notes[j] = s[j];
+    k->a_n = (uint8_t)n;
+    k->a_dir = 0; k->a_k = 0;
+    k->a_idx = (uint8_t)(k->arp == ROTO_ARP_DOWN ? n - 1u : 0u);
+    k->a_vel = (uint8_t)(vel ? vel : 100u);
+    k->a_int = (roto_six * SP[k->arp_rate < 3u ? k->arp_rate : 1u]) / 2u;
+    rarp_play(k);
+}
+
+static uint32_t ring_note(const roto_track_t *k, uint32_t note)   /* GLO PITCH (not on a drum kit) */
+{
+    int32_t n = (int32_t)note;
+    if (k->transp && roto.snd[k->part].eng != ROTO_ENG_DRUM) n += k->transp;
+    return (uint32_t)(n < 0 ? 0 : n > 127 ? 127 : n);
+}
+
 static void fire_now(uint32_t t, roto_track_t *k, uint32_t step_len, uint32_t pos)
 {
     const roto_step_t *st = &k->step[pos < ROTO_STEPS ? pos : 0u];
-    uint32_t i, g;
+    uint32_t i, g, note;
     if (k->nheld) release(t, k);
     if (!st->on) return;
-    if (k->prob < 100u && audio_dice(100u) >= k->prob) return;
-    if (st->chance && audio_dice(100u) >= st->chance) return;
-    k->held[k->nheld++] = st->note;
-    roto_note_on(k->part, st->note, st->vel ? st->vel : 100u);
+    if (k->prob < 100u && audio_dice(100u) >= k->prob) { if (k->arp) rarp_stop(k); return; }
+    if (st->chance && audio_dice(100u) >= st->chance) { if (k->arp) rarp_stop(k); return; }
+    note = ring_note(k, st->note);
+    if (k->arp) { rarp_start(k, note, st->vel); return; }
+    k->held[k->nheld++] = (uint8_t)note;
+    roto_note_on(k->part, (uint8_t)note, st->vel ? st->vel : 100u);
     for (i = 0; i < ROTO_CHORD; i++) {
-        int32_t n = (int32_t)st->note + k->chord[i];
+        int32_t n = (int32_t)note + k->chord[i];
         if (!k->chord[i] || n < 0 || n > 127) continue;
         k->held[k->nheld++] = (uint8_t)n;
         roto_note_on(k->part, (uint8_t)n, st->vel ? st->vel : 100u);
@@ -525,11 +626,13 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
         for (t = 0; t < ROTO_TRACKS; t++) {
             roto.trk[t].lag_left = 0;
             if (roto.trk[t].nheld) release(t, &roto.trk[t]);
+            if (roto.trk[t].a_n || roto.trk[t].a_on != 0xFFu) rarp_stop(&roto.trk[t]);
         }
         if (roto.throw_trk < ROTO_PARTS) { roto.throw_left = 1; throw_tick(); }
         return;
     }
     six = (sample_rate * 15u) / (roto.bpm ? roto.bpm : 120u);
+    roto_six = six;
     sw = roto.swing < 50u ? 50u : roto.swing > 75u ? 75u : roto.swing;
     len16 = (roto.n16 & 1u) ? (2u * six * (100u - sw)) / 100u : (2u * six * sw) / 100u;
     if (roto.trk[0].pos == ROTO_POS_START) {                 /* PLAY: everything from the top, now */
@@ -544,6 +647,13 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
             roto_track_t *k = &roto.trk[t];
             if (k->gate_left && --k->gate_left == 0u) release(t, k);
             if (k->lag_left && --k->lag_left == 0u) fire_now(t, k, k->lag_len, k->lag_step);
+            if (k->a_n) {
+                if (!k->arp) rarp_stop(k);
+                else {
+                    if (k->a_gate_left && --k->a_gate_left == 0u) rarp_off(k);
+                    if (k->a_left && --k->a_left == 0u) rarp_next(k);
+                }
+            }
         }
         if (++roto.acc16 >= len16) {
             roto.acc16 = 0;
@@ -769,6 +879,7 @@ void roto_save_take(roto_save_t *s)
         for (i = 0; i < ROTO_STEPS; i++) r->step[i] = k->step[i];
         r->len = k->len; r->div = k->div; r->gate = k->gate; r->part = k->part;
         r->prob = k->prob; r->fill_note = k->fill_note; r->rot = k->rot; r->lag = k->lag;
+        r->transp = k->transp; r->arp = k->arp; r->arp_rate = k->arp_rate; r->arp_range = k->arp_range; r->arp_len = k->arp_len;
         for (i = 0; i < ROTO_CHORD; i++) r->chord[i] = k->chord[i];
     }
     for (t = 0; t < ROTO_PARTS; t++) s->snd[t] = roto.snd[t];
@@ -791,6 +902,9 @@ void roto_save_give(const roto_save_t *s)
         k->gate = r->gate ? r->gate : 50u; k->part = r->part % ROTO_PARTS;
         k->prob = r->prob <= 100u ? r->prob : 100u; k->fill_note = r->fill_note; k->rot = r->rot;
         k->lag = r->lag <= 40u ? r->lag : 0u;
+        k->transp = r->transp >= -12 && r->transp <= 12 ? r->transp : 0;
+        k->arp = r->arp < ROTO_ARP_MODES ? r->arp : 0u; k->arp_rate = r->arp_rate < 3u ? r->arp_rate : 1u;
+        k->arp_range = r->arp_range >= 1u && r->arp_range <= 3u ? r->arp_range : 1u; k->arp_len = r->arp_len >= 10u && r->arp_len <= 100u ? r->arp_len : 50u;
         for (i = 0; i < ROTO_CHORD; i++) k->chord[i] = r->chord[i];
         for (i = 0; i < ROTO_STEPS; i++) { k->step[i] = r->step[i]; k->home[i] = r->step[i]; }
         k->fill_n = 0;

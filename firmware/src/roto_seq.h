@@ -45,6 +45,15 @@ typedef struct {
     uint8_t  rot;        /* how far ROTATE has turned the pattern (0..len-1, for display) */
     uint8_t  prob;       /* PROB: the chance each hit plays, percent (100 = always) */
     uint8_t  lag;        /* ms each hit plays behind the beat (0: on it): the lazy feel */
+    int8_t   transp;     /* GLO PITCH: semitones on this ring's notes (not on a drum kit's: its pieces would change) */
+    uint8_t  arp;        /* ARP: 0 off, ROTO_ARP_UP .. ROTO_ARP_PEDAL: each hit rolls out until the next */
+    uint8_t  arp_rate;   /* 0 1/32, 1 1/16, 2 1/8 */
+    uint8_t  arp_range;  /* octaves 1..3 */
+    uint8_t  arp_len;    /* each arp note's length, percent of the rate (10..100) */
+    /* audio side: the arp of the last hit */
+    uint8_t  a_n, a_idx, a_dir, a_k, a_on, a_vel;
+    uint8_t  a_notes[16];
+    uint32_t a_left, a_int, a_gate_left;
     uint8_t  lag_step;   /* audio side: the step waiting out its lag ... */
     uint32_t lag_left;   /* ... samples to go (0: none) */
     uint32_t lag_len;    /* ... and its length */
@@ -104,7 +113,15 @@ typedef struct {
 #define ROTO_VIEW_ENV    2
 #define ROTO_VIEW_FLT    3
 #define ROTO_VIEW_DLY    4
-#define ROTO_VIEW_GRV    5   /* GROOVE (the ARP button): tempo, swing, evolve, dub */
+#define ROTO_VIEW_GRV    5   /* GROOVE: tempo, swing, evolve, dub (no button for now) */
+#define ROTO_VIEW_ARP    7   /* ARP: the selected ring's arp */
+#define ROTO_VIEW_GLO    8   /* GLO: the selected ring's sound, live: pitch, filter, echo, length */
+#define ROTO_ARP_UP     1
+#define ROTO_ARP_DOWN   2
+#define ROTO_ARP_UPDOWN 3
+#define ROTO_ARP_RANDOM 4
+#define ROTO_ARP_PEDAL  5   /* the lowest note between each of the others */
+#define ROTO_ARP_MODES  6   /* (with OFF) */
 #define ROTO_VIEW_SND    6
 
 /* what a knob just changed, for roto_ui_show() (the centre shows it for a moment) */
@@ -116,6 +133,8 @@ enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_
        ROTO_SHOW_GBPM, ROTO_SHOW_GSWING, ROTO_SHOW_GEVOLVE, ROTO_SHOW_GDUB,
        ROTO_SHOW_GNUM,   /* PRESETS: a groove number (roto.gnum), or a save's name (roto.gnum >= 10000: save gnum - 10000) */
        ROTO_SHOW_SAVED, ROTO_SHOW_NOTSAVED,
+       ROTO_SHOW_A1, ROTO_SHOW_A2, ROTO_SHOW_A3, ROTO_SHOW_A4,   /* ARP: K1..K4 */
+       ROTO_SHOW_O1, ROTO_SHOW_O2, ROTO_SHOW_O3, ROTO_SHOW_O4,   /* GLO: K1..K4 */
        ROTO_SHOW_S1, ROTO_SHOW_S2, ROTO_SHOW_S3, ROTO_SHOW_S4 };   /* SOUND: K1..K4 (the page says which) */
 
 extern roto_seq_t roto;
@@ -166,12 +185,14 @@ uint32_t roto_piece_of(uint32_t ring);       /* the ring's main piece (its first
 void roto_piece_set(uint32_t ring, uint32_t p);   /* the ring's main piece becomes p (its hits, FILL's note, home) */
 /* SAVE: a groove kept by name: the rings, tempo, key, feel, and the four sounds as chosen and shaped */
 #define ROTO_SAVES 8u
-#define ROTO_SAVE_MAGIC 0x32534F52u   /* "ROS2" */
+#define ROTO_SAVE_MAGIC 0x33534F52u   /* "ROS3" (with the arp and pitch) */
 #define ROTO_NAME_CHARS " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
 typedef struct {
     roto_step_t step[ROTO_STEPS];
     uint8_t len, div, gate, part, prob, fill_note, rot, lag;
     int8_t chord[ROTO_CHORD];
+    int8_t transp;
+    uint8_t arp, arp_rate, arp_range, arp_len;
 } roto_save_ring_t;
 typedef struct {
     uint32_t magic, order;       /* order: higher = saved later (power-on brings back the latest) */

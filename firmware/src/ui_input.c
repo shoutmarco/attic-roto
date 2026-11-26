@@ -416,7 +416,7 @@ static void ui_leds(void)
         ready = 1;
     }
     (void)fam;                                          /* attic-roto: the lit button is the screen you're on */
-    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : roto.view == ROTO_VIEW_DLY ? B_FX : roto.view == ROTO_VIEW_GRV ? B_ARP : roto.view == ROTO_VIEW_SND ? B_LFO : B_HOME], 1);
+    led_put(nl, panel.btn[roto.view == ROTO_VIEW_EUCLID ? B_SEQ : roto.view == ROTO_VIEW_ENV ? B_ENV : roto.view == ROTO_VIEW_FLT ? B_EDIT : roto.view == ROTO_VIEW_DLY ? B_FX : roto.view == ROTO_VIEW_ARP ? B_ARP : roto.view == ROTO_VIEW_GLO ? B_GLO : roto.view == ROTO_VIEW_SND ? B_LFO : B_HOME], 1);
     if ((k = arp_led()) != 2u && (!ui.layer || layer_btn() != B_ARP))
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3]))
@@ -1673,6 +1673,50 @@ static void ui_input(void)
             }
         }
     }
+    if ((roto.view == ROTO_VIEW_GLO || roto.view == ROTO_VIEW_ARP) && roto.sel < ROTO_TRACKS) {
+        /* GLO: the selected ring's sound, live. K1 PITCH (a drum kit: its TUNE), K2 FILTER (the sound's brightness),
+         * K3 ECHO (its delay send), K4 LENGTH (the ring's notes).
+         * ARP: the selected ring's arp. K1 MODE (fully left: off), K2 RATE (right: faster), K3 RANGE, K4 LENGTH. */
+        roto_track_t *k = &roto.trk[roto.sel];
+        uint32_t part = k->part;
+        int32_t v;
+        if (roto.view == ROTO_VIEW_ARP) {
+            if ((v = panel_enc(EN_K1)) != 0) { k->arp = (uint8_t)clamp((int32_t)k->arp + v, 0, ROTO_ARP_MODES - 1); roto_ui_show(ROTO_SHOW_A1, fm1_ms); }
+            if ((v = panel_enc(EN_K2)) != 0) { k->arp_rate = (uint8_t)clamp((int32_t)k->arp_rate - v, 0, 2); roto_ui_show(ROTO_SHOW_A2, fm1_ms); }
+            if ((v = panel_enc(EN_K3)) != 0) { k->arp_range = (uint8_t)clamp((int32_t)k->arp_range + v, 1, 3); roto_ui_show(ROTO_SHOW_A3, fm1_ms); }
+            if ((v = panel_enc(EN_K4)) != 0) { k->arp_len = (uint8_t)clamp((int32_t)k->arp_len + v * 10, 10, 100); roto_ui_show(ROTO_SHOW_A4, fm1_ms); }
+        } else if (part < ROTO_PARTS && part < NTRK) {
+            track_t *tk = &trk[part];
+            const engine_t *en = ENGINES[tk->eng_req % NENGINES];
+            int drum = roto.snd[part].eng == ROTO_ENG_DRUM;
+            if ((v = panel_enc(EN_K1)) != 0) {
+                if (drum) {
+                    const param_desc_t *pd = &en->edit[1];
+                    if (pd->max > pd->min) tk->p[P_E0 + 1] = (int16_t)clamp(tk->p[P_E0 + 1] + v * 2, pd->min, pd->max);
+                } else {
+                    k->transp = (int8_t)clamp((int32_t)k->transp + v, -12, 12);
+                }
+                roto_ui_show(ROTO_SHOW_O1, fm1_ms);
+            }
+            if ((v = panel_enc(EN_K2)) != 0) {
+                uint8_t map[3];
+                int has_env;
+                roto_tone_map(tk->eng_req, map, &has_env);
+                if (map[0] < 8u && en->edit[map[0]].max > en->edit[map[0]].min) {
+                    const param_desc_t *pd = &en->edit[map[0]];
+                    int32_t step = (pd->max - pd->min) / 64;
+                    tk->p[P_E0 + map[0]] = (int16_t)clamp(tk->p[P_E0 + map[0]] + v * (step ? step : 1), pd->min, pd->max);
+                }
+                roto_ui_show(ROTO_SHOW_O2, fm1_ms);
+            }
+            if ((v = panel_enc(EN_K3)) != 0) {
+                roto.snd[part].dly = (uint8_t)clamp((int32_t)roto.snd[part].dly + v * 4, 0, 127);
+                tk->p[P_DLY] = roto.snd[part].dly;
+                roto_ui_show(ROTO_SHOW_O3, fm1_ms);
+            }
+            if ((v = panel_enc(EN_K4)) != 0) { k->gate = (uint8_t)clamp((int32_t)k->gate + v * 5, 5, 100); roto_ui_show(ROTO_SHOW_O4, fm1_ms); }
+        }
+    }
     if (roto.view == ROTO_VIEW_GRV) {   /* GROOVE: K1 BPM, K2 SWING, K3 EVOLVE, K4 DUB (taken here: the ring knobs see nothing) */
         int32_t v;
         if ((v = panel_enc(EN_K1)) != 0) { roto.bpm = (uint8_t)clamp((int32_t)roto.bpm + v, 60, 180); song.g[G_BPM] = roto.bpm; roto_ui_show(ROTO_SHOW_GBPM, fm1_ms); }
@@ -1877,8 +1921,12 @@ static void ui_input(void)
         else if (++roto.spage > 2u) { roto.view = ROTO_VIEW_RING; roto.spage = 0; }
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
-    if (pressed & (1u << panel.btn[B_ARP])) {               /* ARP: GROOVE (again: back to the ring) */
-        roto.view = roto.view == ROTO_VIEW_GRV ? ROTO_VIEW_RING : ROTO_VIEW_GRV;
+    if (pressed & (1u << panel.btn[B_ARP])) {               /* ARP: the selected ring's arp (again: back to the ring) */
+        roto.view = roto.view == ROTO_VIEW_ARP ? ROTO_VIEW_RING : ROTO_VIEW_ARP;
+        roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
+    }
+    if (pressed & (1u << panel.btn[B_GLO])) {               /* GLO: the selected ring's sound, live (again: back to the ring) */
+        roto.view = roto.view == ROTO_VIEW_GLO ? ROTO_VIEW_RING : ROTO_VIEW_GLO;
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
     if (pressed & (1u << panel.btn[B_EDIT])) {              /* EDIT: the filter (again: back to the ring) */
