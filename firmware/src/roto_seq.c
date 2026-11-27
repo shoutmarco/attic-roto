@@ -162,6 +162,45 @@ static void groove_ring(roto_track_t *k, const char *p, uint32_t note, uint32_t 
 
 static uint32_t ring_hits(const roto_track_t *k);
 
+#include "ref_grooves.h"
+
+/* one of the four reference grooves, exactly as transcribed: nothing random, nothing evolving */
+static void reference_groove(uint32_t i)
+{
+    const roto_ref_t *r = &REF[i % 4u];
+    roto_track_t *k;
+    uint32_t s, t, b = 0;
+    roto_seq_init();
+    roto.seed = i + 1u;
+    roto.bpm = r->bpm;
+    roto.swing = r->swing;
+    roto.grand = 0;
+    roto.evolve = 0;
+    roto.dtime = 10;                                             /* 1/8D */
+    roto.dfdbk = 55;
+    for (s = 0; s < 32u; s++) if (r->bass[s]) { b = r->bnote[s]; break; }
+    roto.root = (uint8_t)(b ? b % 12u : 0u);
+    roto.mode = 0;
+    for (t = 0; t < ROTO_TRACKS; t++) { roto.trk[t].len = 32; roto.trk[t].div = 1; roto.trk[t].prob = 100; }
+    k = &roto.trk[0]; k->gate = 25; k->fill_note = 36; k->lag = r->klag;            /* 1: the kick */
+    for (s = 0; s < 32u; s++) if (r->kick[s]) put(k, s, 36, r->kick[s]);
+    k = &roto.trk[1]; k->gate = 45; k->fill_note = (uint8_t)(b ? b : 36u);           /* 2: the bass */
+    for (s = 0; s < 32u; s++) if (r->bass[s]) put(k, s, r->bnote[s], r->bass[s]);
+    k = &roto.trk[2]; k->len = 16; k->gate = 30; k->fill_note = 60;                  /* 3, 4: empty, yours */
+    k->chord[0] = 3; k->chord[1] = 7; k->chord[2] = 10;
+    k = &roto.trk[3]; k->len = 16; k->gate = 30; k->fill_note = 72;
+    k = &roto.trk[4]; k->gate = 25; k->fill_note = 42; k->lag = r->hlag;             /* 5: the hats */
+    for (s = 0; s < 32u; s++) if (r->hat[s]) put(k, s, 42, r->hat[s]);
+    k = &roto.trk[5]; k->part = 0; k->gate = 25; k->fill_note = r->perc_note; k->lag = r->plag;   /* 6: the percussion */
+    for (s = 0; s < 32u; s++) if (r->perc[s]) put(k, s, r->perc_note, r->perc[s]);
+    sound(&roto.snd[0], SND_DRUMS[0], 0, 18, 0, 0); roto.snd[0].kit = 9;         /* ROUND KIT */
+    sound(&roto.snd[1], SND_BASS[0], 0, 0, 0, 0);                                 /* SUB BASS */
+    sound(&roto.snd[2], SND_STAB[0], 82, 52, 20, -22);                            /* TINE EP */
+    sound(&roto.snd[3], SND_BLIP[0], 92, 50, 0, 26);                              /* SINE KEY */
+    for (t = 0; t < ROTO_TRACKS; t++) home_save(&roto.trk[t]);
+    roto.sel = 0;
+}
+
 void roto_seq_generate(uint32_t seed)
 {
     static const uint8_t ROOTS[6] = {2, 4, 9, 7, 0, 5};          /* D E A G C F */
@@ -172,6 +211,7 @@ void roto_seq_generate(uint32_t seed)
     roto_track_t *k;
     uint32_t i, s, n, pc, base, t, first = ROTO_STEPS, blen;
 
+    if (seed >= 1u && seed <= ROTO_GROOVES) { reference_groove(seed - 1u); return; }   /* (Marco's four) */
     roto_seq_init();
     i = seed + 0x9E3779B9u;                                      /* (spread any seed: murmur3's finaliser) */
     i ^= i >> 16; i *= 0x85EBCA6Bu; i ^= i >> 13; i *= 0xC2B2AE35u; i ^= i >> 16;

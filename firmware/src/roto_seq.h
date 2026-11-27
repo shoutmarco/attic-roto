@@ -15,7 +15,8 @@
 
 #define ROTO_TRACKS  6    /* rings */
 #define ROTO_PARTS   4    /* the synth's sounds: rings 1-4 play their own, ring 5 the drums, ring 6 the blips */
-#define ROTO_GROOVES 9999u   /* PRESETS dials through grooves 1..9999 (roto_seq_generate's seed: the same number, the same groove) */
+#define ROTO_GROOVES 4u      /* PRESETS dials through Marco's four reference grooves (ref_grooves.h): 1 BABY FORD, 2 BIRDS, 3 ORIN,
+                                4 FACTORY. (roto_seq_generate's other seeds still make the old generated grooves.) */
 #define ROTO_STEPS  32    /* max steps per ring (32: memory; the patterns use up to 16) */
 #define ROTO_CHORD   3    /* extra chord notes per step */
 #define ROTO_POS_START 0xFFu   /* pos before the first step after PLAY */
