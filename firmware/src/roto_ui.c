@@ -1850,11 +1850,23 @@ static uint32_t rt_ring_sig(void)
 
 /* repaint rows y0..y1 a strip at a time: each strip is blank only while it is
  * drawn, never the whole area at once (no flash when a knob changes the layout) */
+static void ui_input(void);                   /* (ui_input.c) */
+static uint8_t rt_in_draw;
+static uint32_t rt_in_t;
 static void rt_repaint_rows(int32_t y0, int32_t y1)
 {
     int32_t y;
-    for (y = y0; y < y1; y += RT_BAND)
+    for (y = y0; y < y1; y += RT_BAND) {
         rt_repaint(0, y, RT_W, y + RT_BAND < y1 ? y + RT_BAND : y1);
+        /* a big redraw is long: the knobs, keys and buttons are read between its strips, so the sound
+         * follows a turn at once (the scene is drawn from rt_sn, taken before; a change shows next frame) */
+        if (!rt_in_draw && fm1_ms - rt_in_t >= 2u) {
+            rt_in_draw = 1;
+            ui_input();
+            rt_in_t = fm1_ms;
+            rt_in_draw = 0;
+        }
+    }
 }
 
 int roto_ui_draw(int force, uint32_t now_ms)
