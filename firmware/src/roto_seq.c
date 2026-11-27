@@ -189,7 +189,7 @@ void roto_seq_generate(uint32_t seed)
     if (g->style == 0u) roto.dub = 70;                           /* (and more throws into it) */
     roto.swing = (uint8_t)(g->swing + rnd(2u));
     roto.grand = g->rnd;                                         /* (a little looseness: "organic, human") */
-    roto.evolve = 0;                                             /* (a pattern changes only when you change it; GROOVE K4 turns it up) */
+    roto.evolve = 40;
 
     /* 1: the kick, alone */
     k = &roto.trk[0];
@@ -331,11 +331,24 @@ static uint32_t roto_sr = 44100u;           /* (the tick's sample rate, for the 
 
 static uint32_t roto_six = 5512u;           /* (a 1/16 in samples, for the arp) */
 
-/* -------- ARP: each hit of a ring rolls out, one note at a time, until its next hit */
+/* -------- ARP. A hit sets the notes (its chord: NOTES, over RANGE octaves) and sounds the first at once; then
+ * the arp steps through them on the groove's own grid (the swung 1/16s; 1/32 and the triplets between them) until
+ * the next hit, where it carries on from where it was (HOLD) or starts again (RESTART). RHYTHM rests some of its
+ * steps; ACCENT leans on the beat or the off-beat. */
+static const uint8_t ARP_C[ROTO_ARP_RATES] = {1, 1, 2, 4, 4, 3, 4};   /* 1/16s in a cycle ... */
+static const uint8_t ARP_N[ROTO_ARP_RATES] = {2, 1, 1, 6, 3, 1, 1};   /* ... notes in it: 1/32 1/16 1/8 1/16T 1/8T 1/8D 1/4 */
+static const uint16_t ARP_RHY[ROTO_ARP_RHYTHMS] = {               /* 16 steps, the first the top bit */
+    0xFFFF, 0xDDDD, 0xBBBB, 0xAAAA, 0x9292, 0x6666, 0x8889, 0x9249, 0x9228, 0xFEFC};
+static const char *const ARP_RHY_N[ROTO_ARP_RHYTHMS] = {"ALL", "GALLOP", "SKIP", "HALF", "TRESILLO", "PUSH", "SPARSE", "THREES", "CLAVE", "BREATH"};
+const char *roto_arp_rhythm_name(uint32_t r) { return ARP_RHY_N[r % ROTO_ARP_RHYTHMS]; }
+
 static void rarp_off(roto_track_t *k)
 {
+    uint32_t i;
     if (k->a_on != 0xFFu) roto_note_off(k->part, k->a_on);
+    for (i = 0; i < k->a_ch && i < 4u; i++) roto_note_off(k->part, k->a_chn[i]);
     k->a_on = 0xFF;
+    k->a_ch = 0;
     k->a_gate_left = 0;
 }
 
@@ -343,26 +356,16 @@ static void rarp_stop(roto_track_t *k)
 {
     rarp_off(k);
     k->a_n = 0;
+    k->a_sub = 0;
 }
 
-static void rarp_play(roto_track_t *k)
-{
-    uint32_t g;
-    rarp_off(k);
-    k->a_on = k->a_notes[k->a_idx < k->a_n ? k->a_idx : 0u];
-    roto_note_on(k->part, k->a_on, k->a_vel);
-    g = (k->a_int * (k->arp_len ? k->arp_len : 50u)) / 100u;
-    k->a_gate_left = g ? g : 1u;
-    k->a_left = k->a_int ? k->a_int : 1u;
-}
-
-static void rarp_next(roto_track_t *k)
+static void rarp_step(roto_track_t *k)             /* the next note, by MODE */
 {
     uint32_t n = k->a_n, i = k->a_idx;
     if (!n) return;
     switch (k->arp) {
     case ROTO_ARP_DOWN:   i = i ? i - 1u : n - 1u; break;
-    case ROTO_ARP_UPDOWN:
+    case ROTO_ARP_UPDOWN: case ROTO_ARP_DOWNUP:
         if (n < 2u) { i = 0; break; }
         if (!k->a_dir) { if (i + 1u >= n) { k->a_dir = 1; i = n - 2u; } else i++; }
         else           { if (!i) { k->a_dir = 0; i = 1; } else i--; }
@@ -372,49 +375,112 @@ static void rarp_next(roto_track_t *k)
         if (i || n < 2u) i = 0;
         else { k->a_k = (uint8_t)(k->a_k % (n - 1u) + 1u); i = k->a_k; }
         break;
+    case ROTO_ARP_CONVERGE:
+        k->a_k = (uint8_t)((k->a_k + 1u) % n);
+        i = (k->a_k & 1u) ? n - 1u - (k->a_k >> 1) : (uint32_t)(k->a_k >> 1);
+        break;
+    case ROTO_ARP_CHORD:  i = 0; break;
     default:              i = (i + 1u) % n; break;
     }
-    k->a_idx = (uint8_t)i;
-    k->a_vel = (uint8_t)((k->a_vel * 7u) / 8u < 40u ? 40u : (k->a_vel * 7u) / 8u);   /* (each a touch softer) */
-    rarp_play(k);
+    k->a_idx = (uint8_t)(i < n ? i : 0u);
 }
 
-/* the notes a hit rolls through: its chord (the ring's), or the key's seventh chord on it; a drum: itself (a roll) */
+/* one step of the arp: a rest (RHYTHM) or a note; phase: its 1/16 in the beat (0..3), 4 between 1/16s */
+static void rarp_tick(roto_track_t *k, uint32_t phase)
+{
+    uint32_t n = k->a_n, r = k->arp_rate % ROTO_ARP_RATES, vel, g, len;
+    if (!n || !k->arp) return;
+    rarp_off(k);
+    k->a_last16 = roto.n16 + 1u;
+    if (!((ARP_RHY[k->arp_rhythm % ROTO_ARP_RHYTHMS] >> (15u - (k->a_pos & 15u))) & 1u)) { k->a_pos++; return; }
+    if (k->a_fresh) k->a_fresh = 0; else rarp_step(k);
+    vel = k->a_vel;
+    if (k->arp_accent == 0u && phase != 0u) vel = (vel * 3u) / 4u;          /* the beat */
+    if (k->arp_accent == 2u && phase != 2u) vel = (vel * 3u) / 4u;          /* the off-beat */
+    if (vel < 20u) vel = 20u;
+    if (k->arp == ROTO_ARP_CHORD) {
+        uint32_t i;
+        for (i = 0; i < n && i < 4u; i++) { k->a_chn[i] = k->a_notes[i]; roto_note_on(k->part, k->a_notes[i], vel); }
+        k->a_ch = (uint8_t)i;
+    } else {
+        k->a_on = k->a_notes[k->a_idx < n ? k->a_idx : 0u];
+        roto_note_on(k->part, k->a_on, vel);
+    }
+    len = (ARP_C[r] * roto_six) / ARP_N[r];
+    g = (len * (k->arp_len ? k->arp_len : 50u)) / 100u;
+    k->a_gate_left = g ? g : 1u;
+    k->a_pos++;
+}
+
+/* the 1/16 clock: each arp steps on its rate's cycle, and sets up the steps between 1/16s (1/32, triplets) */
+static void rarp_sixteenth(uint32_t six)
+{
+    uint32_t t;
+    for (t = 0; t < ROTO_TRACKS; t++) {
+        roto_track_t *k = &roto.trk[t];
+        uint32_t r = k->arp_rate % ROTO_ARP_RATES;
+        if (!k->arp || !k->a_n || roto.n16 % ARP_C[r]) continue;
+        if (k->a_last16 != roto.n16 + 1u) rarp_tick(k, roto.n16 & 3u);    /* (not twice: a hit just sounded) */
+        if (ARP_N[r] > 1u) {
+            k->a_int = (ARP_C[r] * six) / ARP_N[r];
+            k->a_left = k->a_int ? k->a_int : 1u;
+            k->a_sub = (uint8_t)(ARP_N[r] - 1u);
+        } else k->a_sub = 0;
+    }
+}
+
+/* a hit: its notes (NOTES: the ring's own chord, or the key's chord on it, over RANGE octaves; a drum: itself, a
+ * roll), and the first of them now */
 static void rarp_start(roto_track_t *k, uint32_t note, uint32_t vel)
 {
-    static const uint8_t SP[3] = {1, 2, 4};              /* 1/32s per note */
+    static const uint8_t DEG[ROTO_ARP_SHAPES][6] = {     /* the key's degrees above the note (0xFF: end) */
+        {0, 2, 4, 6, 0xFF}, {0, 2, 4, 0xFF}, {0, 2, 4, 6, 8, 0xFF}, {0, 3, 4, 0xFF}, {0, 0xFF}, {0, 4, 7, 0xFF}};
+    static const uint8_t SEMI[ROTO_ARP_SHAPES][6] = {    /* the same in semitones, for a note out of the key */
+        {0, 3, 7, 10, 0xFF}, {0, 3, 7, 0xFF}, {0, 3, 7, 10, 14, 0xFF}, {0, 5, 7, 0xFF}, {0, 0xFF}, {0, 7, 12, 0xFF}};
     uint8_t s[16];
-    uint32_t n = 0, o, j, r = k->arp_range < 1u ? 1u : k->arp_range > 3u ? 3u : k->arp_range;
+    uint32_t n = 0, o, j, sh = k->arp_notes % ROTO_ARP_SHAPES, was = k->a_n;
+    uint32_t r = k->arp_range < 1u ? 1u : k->arp_range > 4u ? 4u : k->arp_range;
     if (roto.snd[k->part].eng == ROTO_ENG_DRUM) {
         s[n++] = (uint8_t)note;
     } else {
-        int32_t iv[4] = {0, 0, 0, 0};
+        int32_t iv[6];
         uint32_t m = 1;
-        for (j = 0; j < ROTO_CHORD; j++) if (k->chord[j] > 0) iv[m++] = k->chord[j];
-        if (m == 1u) {                                    /* no chord of its own: the key's, built on this note */
+        iv[0] = 0;
+        if (sh == 0u) for (j = 0; j < ROTO_CHORD; j++) if (k->chord[j] > 0) iv[m++] = k->chord[j];
+        if (m == 1u) {                                   /* the key's chord on this note */
             const uint8_t *sc = MODE_SC[roto.mode % 3u];
             uint32_t pc = (note + 120u - roto.root) % 12u, d = 0;
             for (j = 0; j < 7u; j++) if (sc[j] == pc) d = j + 1u;
-            if (d) {
-                d--;
-                for (j = 1; j < 4u; j++) { uint32_t g = d + 2u * j; iv[j] = (int32_t)(sc[g % 7u] + 12u * (g / 7u)) - (int32_t)sc[d]; }
-            } else { iv[1] = 3; iv[2] = 7; iv[3] = 10; }
-            m = 4;
+            m = 0;
+            for (j = 0; j < 6u && DEG[sh][j] != 0xFFu; j++) {
+                if (d) { uint32_t g = d - 1u + DEG[sh][j]; iv[m++] = (int32_t)(sc[g % 7u] + 12u * (g / 7u)) - (int32_t)sc[d - 1u]; }
+                else iv[m++] = SEMI[sh][j];
+            }
         }
         for (o = 0; o < r; o++)
             for (j = 0; j < m && n < 16u; j++) {
                 int32_t x = (int32_t)note + iv[j] + 12 * (int32_t)o;
-                s[n++] = (uint8_t)(x > 120 ? 120 : x);
+                uint32_t q, dup = 0;
+                if (x > 120) x = 120;
+                for (q = 0; q < n; q++) dup |= s[q] == (uint8_t)x;   /* (each note once: 1-5-8 over octaves meets itself) */
+                if (!dup) s[n++] = (uint8_t)x;
             }
     }
     rarp_off(k);
     for (j = 0; j < n; j++) k->a_notes[j] = s[j];
     k->a_n = (uint8_t)n;
-    k->a_dir = 0; k->a_k = 0;
-    k->a_idx = (uint8_t)(k->arp == ROTO_ARP_DOWN ? n - 1u : 0u);
     k->a_vel = (uint8_t)(vel ? vel : 100u);
-    k->a_int = (roto_six * SP[k->arp_rate < 3u ? k->arp_rate : 1u]) / 2u;
-    rarp_play(k);
+    if (k->arp_restart || !was) {                         /* from the start */
+        k->a_dir = (uint8_t)(k->arp == ROTO_ARP_DOWNUP);
+        k->a_k = 0;
+        k->a_idx = (uint8_t)(k->arp == ROTO_ARP_DOWN || k->arp == ROTO_ARP_DOWNUP ? n - 1u : 0u);
+        k->a_pos = 0;
+        k->a_fresh = 1;
+    } else if (k->a_idx >= n) k->a_idx = 0;
+    {   /* the hit sounds now if it falls on the arp's own grid (and the grid has not just stepped); else at its next step */
+        uint32_t rr = k->arp_rate % ROTO_ARP_RATES;
+        if (roto.n16 % ARP_C[rr] == 0u && k->a_last16 != roto.n16 + 1u) rarp_tick(k, roto.n16 & 3u);
+    }
 }
 
 static uint32_t ring_note(const roto_track_t *k, uint32_t note)   /* GLO PITCH (not on a drum kit) */
@@ -617,6 +683,7 @@ static void sixteenth(uint32_t six)
         }
         fire(t, k, six * div);
     }
+    rarp_sixteenth(six);
 }
 
 void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
@@ -653,7 +720,10 @@ void roto_seq_tick(uint32_t block_frames, uint32_t sample_rate)
                 if (!k->arp) rarp_stop(k);
                 else {
                     if (k->a_gate_left && --k->a_gate_left == 0u) rarp_off(k);
-                    if (k->a_left && --k->a_left == 0u) rarp_next(k);
+                    if (k->a_sub && k->a_left && --k->a_left == 0u) {   /* (a step between 1/16s) */
+                        rarp_tick(k, 4u);
+                        if (--k->a_sub) k->a_left = k->a_int;
+                    }
                 }
             }
         }
@@ -913,6 +983,9 @@ static const uint8_t TONE_MAP[14][4] = {
     {7, 6, 0xFF, 1},       /* 13 SLICE   TONE DCAY -    */
 };
 
+/* FILTER K3 on a sound with no filter envelope: another of its settings that moves the sound (DRUM TUNE, WHEEL BODY) */
+uint32_t roto_tone_k3(uint32_t eng) { return eng == 10u ? 1u : eng == 7u ? 2u : 0xFFu; }
+
 void roto_tone_map(uint32_t eng, uint8_t out[3], int *has_env)
 {
     const uint8_t *m = TONE_MAP[eng < 14u ? eng : 1u];
@@ -955,7 +1028,8 @@ void roto_save_take(roto_save_t *s)
         for (i = 0; i < ROTO_STEPS; i++) r->step[i] = k->step[i];
         r->len = k->len; r->div = k->div; r->gate = k->gate; r->part = k->part;
         r->prob = k->prob; r->fill_note = k->fill_note; r->rot = k->rot; r->lag = k->lag;
-        r->transp = k->transp; r->arp = k->arp; r->arp_rate = k->arp_rate; r->arp_range = k->arp_range; r->arp_len = k->arp_len;
+        r->transp = k->transp; r->arp = (uint8_t)(k->arp | (k->arp_accent << 4) | (k->arp_restart << 6));
+        r->arp_rate = (uint8_t)(k->arp_rate | (k->arp_notes << 3)); r->arp_range = (uint8_t)(k->arp_range | (k->arp_rhythm << 3)); r->arp_len = k->arp_len;
         for (i = 0; i < ROTO_CHORD; i++) r->chord[i] = k->chord[i];
     }
     for (t = 0; t < ROTO_PARTS; t++) s->snd[t] = roto.snd[t];
@@ -980,8 +1054,12 @@ void roto_save_give(const roto_save_t *s)
         k->prob = r->prob <= 100u ? r->prob : 100u; k->fill_note = r->fill_note; k->rot = r->rot;
         k->lag = r->lag <= 40u ? r->lag : 0u;
         k->transp = r->transp >= -12 && r->transp <= 12 ? r->transp : 0;
-        k->arp = r->arp < ROTO_ARP_MODES ? r->arp : 0u; k->arp_rate = r->arp_rate < 3u ? r->arp_rate : 1u;
-        k->arp_range = r->arp_range >= 1u && r->arp_range <= 3u ? r->arp_range : 1u; k->arp_len = r->arp_len >= 10u && r->arp_len <= 100u ? r->arp_len : 50u;
+        k->arp = (r->arp & 15u) < ROTO_ARP_MODES ? (uint8_t)(r->arp & 15u) : 0u;          /* (older saves: the upper bits 0) */
+        k->arp_accent = (uint8_t)((r->arp >> 4) & 3u) % 3u; k->arp_restart = (uint8_t)((r->arp >> 6) & 1u);
+        k->arp_rate = (r->arp_rate & 7u) < ROTO_ARP_RATES ? (uint8_t)(r->arp_rate & 7u) : 1u;
+        k->arp_notes = (uint8_t)(((r->arp_rate >> 3) & 7u) % ROTO_ARP_SHAPES);
+        k->arp_range = (r->arp_range & 7u) >= 1u && (r->arp_range & 7u) <= 4u ? (uint8_t)(r->arp_range & 7u) : 1u;
+        k->arp_rhythm = (uint8_t)(((r->arp_range >> 3) & 15u) % ROTO_ARP_RHYTHMS); k->arp_len = r->arp_len >= 10u && r->arp_len <= 100u ? r->arp_len : 50u;
         for (i = 0; i < ROTO_CHORD; i++) k->chord[i] = r->chord[i];
         for (i = 0; i < ROTO_STEPS; i++) { k->step[i] = r->step[i]; k->home[i] = r->step[i]; }
         k->fill_n = 0;

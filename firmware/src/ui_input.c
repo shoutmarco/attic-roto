@@ -1583,9 +1583,9 @@ static void ui_input(void)
         uint32_t part = roto.sel < ROTO_TRACKS ? roto.trk[roto.sel].part : 0u;
         for (t = 0; t < ROTO_PARTS && t < NTRK; t++) {       /* (the screen's copy follows the sound) */
             for (e = 0; e < 4u; e++) roto.env[t][e] = (uint8_t)clamp(trk[t].p[ENV_P[e]], 0, 127);
-            if (roto.snd[t].eng == ROTO_ENG_DRUM) {          /* a drum kit has no ADSR: its DECY is its length */
-                roto.env[t][0] = 0; roto.env[t][2] = 0;
-                roto.env[t][1] = roto.env[t][3] = (uint8_t)clamp(trk[t].p[P_E0 + 3], 0, 127);
+            if (roto.snd[t].eng == ROTO_ENG_DRUM) {          /* a drum kit has no ADSR: its SNAP, and its DECY as its length */
+                roto.env[t][0] = (uint8_t)clamp(trk[t].p[P_E0 + 4], 0, 127);
+                roto.env[t][1] = roto.env[t][2] = roto.env[t][3] = (uint8_t)clamp(trk[t].p[P_E0 + 3], 0, 127);
             }
         }
         if (roto.view == ROTO_VIEW_ENV && part < NTRK) {          /* (rings 5 and 6: the sound they share) */
@@ -1594,16 +1594,11 @@ static void ui_input(void)
             for (e = 0; e < 4u; e++) {
                 int32_t v = panel_enc(EN_K1 + (int32_t)e);
                 if (!v) continue;
-                if (drum) {                                   /* drums: DECAY and RELEASE shorten / lengthen the hits */
-                    if (e == 1u || e == 3u) tk->p[P_E0 + 3] = (int16_t)clamp(tk->p[P_E0 + 3] + v * 2, 0, 127);
+                if (drum) {                                   /* drums (no ADSR): K1 the hit's snap, K2..K4 its length (the kit's DECY) */
+                    uint32_t ep = e == 0u ? 4u : 3u;
+                    tk->p[P_E0 + ep] = (int16_t)clamp(tk->p[P_E0 + ep] + v * 2, 0, 127);
                 } else {
                     tk->p[ENV_P[e]] = (int16_t)clamp(tk->p[ENV_P[e]] + v * 2, 0, 127);
-                    if (e == 1u) {                            /* DECAY: the notes may ring that long (their length follows) */
-                        uint32_t r;
-                        for (r = 0; r < ROTO_TRACKS; r++)
-                            if (roto.trk[r].part == part)
-                                roto.trk[r].gate = (uint8_t)clamp(15 + (tk->p[P_DEC] * 85) / 127, 15, 100);
-                    }
                 }
                 roto_ui_show(ROTO_SHOW_ATK + e, fm1_ms);
             }
@@ -1704,10 +1699,23 @@ static void ui_input(void)
         uint32_t part = k->part;
         int32_t v;
         if (roto.view == ROTO_VIEW_ARP) {
-            if ((v = panel_enc(EN_K1)) != 0) { k->arp = (uint8_t)clamp((int32_t)k->arp + v, 0, ROTO_ARP_MODES - 1); roto_ui_show(ROTO_SHOW_A1, fm1_ms); }
-            if ((v = panel_enc(EN_K2)) != 0) { k->arp_rate = (uint8_t)clamp((int32_t)k->arp_rate - v, 0, 2); roto_ui_show(ROTO_SHOW_A2, fm1_ms); }
-            if ((v = panel_enc(EN_K3)) != 0) { k->arp_range = (uint8_t)clamp((int32_t)k->arp_range + v, 1, 3); roto_ui_show(ROTO_SHOW_A3, fm1_ms); }
-            if ((v = panel_enc(EN_K4)) != 0) { k->arp_len = (uint8_t)clamp((int32_t)k->arp_len + v * 10, 10, 100); roto_ui_show(ROTO_SHOW_A4, fm1_ms); }
+            if (!roto.apage) {                               /* page 1: MODE, RATE (clockwise faster), RANGE, LENGTH */
+                static const uint8_t SLOWEST_FIRST[ROTO_ARP_RATES] = {6, 5, 2, 4, 1, 3, 0};   /* 1/4 1/8D 1/8 1/8T 1/16 1/16T 1/32 */
+                if ((v = panel_enc(EN_K1)) != 0) { k->arp = (uint8_t)clamp((int32_t)k->arp + v, 0, ROTO_ARP_MODES - 1); roto_ui_show(ROTO_SHOW_A1, fm1_ms); }
+                if ((v = panel_enc(EN_K2)) != 0) {
+                    int32_t at = 0, j;
+                    for (j = 0; j < ROTO_ARP_RATES; j++) if (SLOWEST_FIRST[j] == k->arp_rate) at = j;
+                    k->arp_rate = SLOWEST_FIRST[clamp(at + v, 0, ROTO_ARP_RATES - 1)];
+                    roto_ui_show(ROTO_SHOW_A2, fm1_ms);
+                }
+                if ((v = panel_enc(EN_K3)) != 0) { k->arp_range = (uint8_t)clamp((int32_t)k->arp_range + v, 1, 4); roto_ui_show(ROTO_SHOW_A3, fm1_ms); }
+                if ((v = panel_enc(EN_K4)) != 0) { k->arp_len = (uint8_t)clamp((int32_t)k->arp_len + v * 10, 10, 100); roto_ui_show(ROTO_SHOW_A4, fm1_ms); }
+            } else {                                         /* page 2: NOTES, RHYTHM, ACCENT, HOLD */
+                if ((v = panel_enc(EN_K1)) != 0) { k->arp_notes = (uint8_t)clamp((int32_t)k->arp_notes + v, 0, ROTO_ARP_SHAPES - 1); roto_ui_show(ROTO_SHOW_A1, fm1_ms); }
+                if ((v = panel_enc(EN_K2)) != 0) { k->arp_rhythm = (uint8_t)clamp((int32_t)k->arp_rhythm + v, 0, ROTO_ARP_RHYTHMS - 1); roto_ui_show(ROTO_SHOW_A2, fm1_ms); }
+                if ((v = panel_enc(EN_K3)) != 0) { k->arp_accent = (uint8_t)clamp((int32_t)k->arp_accent + v, 0, 2); roto_ui_show(ROTO_SHOW_A3, fm1_ms); }
+                if ((v = panel_enc(EN_K4)) != 0) { k->arp_restart = (uint8_t)clamp((int32_t)k->arp_restart + v, 0, 1); roto_ui_show(ROTO_SHOW_A4, fm1_ms); }
+            }
         } else if (part < ROTO_PARTS && part < NTRK) {
             track_t *tk = &trk[part];
             const engine_t *en = ENGINES[tk->eng_req % NENGINES];
@@ -1782,9 +1790,9 @@ static void ui_input(void)
             int has_env;
             roto_tone_map(trk[t].eng_req, map, &has_env);
             for (e = 0; e < 4u; e++) {
-                uint32_t m = e < 2u ? map[e] : e == 3u ? map[2] : 0xFFu, c;
-                const char *l = e == 2u ? "ENV" : (m < 8u && en->edit[m].label) ? en->edit[m].label : "";
-                if (e == 2u) {
+                uint32_t m = e < 2u ? map[e] : e == 3u ? map[2] : (has_env ? 0xFFu : roto_tone_k3(trk[t].eng_req)), c;
+                const char *l = e == 2u && has_env ? "ENV" : (m < 8u && en->edit[m].label) ? en->edit[m].label : "";
+                if (e == 2u && has_env) {
                     roto.flt[t][e] = (int8_t)(has_env ? clamp((trk[t].p[P_ED_FLT] * 100) / 64, -100, 100) : -128);
                 } else if (m < 8u && en->edit[m].max > en->edit[m].min) {
                     const param_desc_t *pd = &en->edit[m];
@@ -1804,10 +1812,10 @@ static void ui_input(void)
             roto_tone_map(tk->eng_req, map, &has_env);
             for (e = 0; e < 4u; e++) {
                 int32_t v = panel_enc(EN_K1 + (int32_t)e);
-                uint32_t m = e < 2u ? map[e] : e == 3u ? map[2] : 0xFFu;
+                uint32_t m = e < 2u ? map[e] : e == 3u ? map[2] : (has_env ? 0xFFu : roto_tone_k3(tk->eng_req));
                 if (!v) continue;
-                if (e == 2u) {
-                    if (has_env) tk->p[P_ED_FLT] = (int16_t)clamp(tk->p[P_ED_FLT] + v * 2, -64, 63);
+                if (e == 2u && has_env) {
+                    tk->p[P_ED_FLT] = (int16_t)clamp(tk->p[P_ED_FLT] + v * 4, -64, 63);   /* (bigger steps: you hear it) */
                 } else if (m < 8u) {
                     const param_desc_t *pd = &en->edit[m];
                     int32_t step = (pd->max - pd->min) / 64;
@@ -2019,7 +2027,9 @@ static void ui_input(void)
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
     if (!ROTO_SIMPLE && (pressed & (1u << panel.btn[B_ARP]))) {               /* ARP: the selected ring's arp (again: back to the ring) */
-        roto.view = roto.view == ROTO_VIEW_ARP ? ROTO_VIEW_RING : ROTO_VIEW_ARP;
+        if (roto.view != ROTO_VIEW_ARP) { roto.view = ROTO_VIEW_ARP; roto.apage = 0; }   /* ARP: page 1, again page 2, again the ring */
+        else if (!roto.apage) roto.apage = 1;
+        else { roto.view = ROTO_VIEW_RING; roto.apage = 0; }
         roto_ui_show(ROTO_SHOW_NONE, fm1_ms);
     }
     if (!ROTO_SIMPLE && (pressed & (1u << panel.btn[B_SCL]))) {               /* SCL: GROOVE (again: back to the ring) */

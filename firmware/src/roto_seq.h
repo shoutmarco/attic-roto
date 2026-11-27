@@ -55,10 +55,17 @@ typedef struct {
     uint8_t  prob;       /* PROB: the chance each hit plays, percent (100 = always) */
     uint8_t  lag;        /* ms each hit plays behind the beat (0: on it): the lazy feel */
     int8_t   transp;     /* GLO PITCH: semitones on this ring's notes (not on a drum kit's: its pieces would change) */
-    uint8_t  arp;        /* ARP: 0 off, ROTO_ARP_UP .. ROTO_ARP_PEDAL: each hit rolls out until the next */
-    uint8_t  arp_rate;   /* 0 1/32, 1 1/16, 2 1/8 */
-    uint8_t  arp_range;  /* octaves 1..3 */
+    uint8_t  arp;        /* ARP: 0 off, ROTO_ARP_UP .. ROTO_ARP_CHORD */
+    uint8_t  arp_rate;   /* 0 1/32, 1 1/16, 2 1/8, 3 1/16T, 4 1/8T, 5 1/8D, 6 1/4 */
+    uint8_t  arp_range;  /* octaves 1..4 */
     uint8_t  arp_len;    /* each arp note's length, percent of the rate (10..100) */
+    uint8_t  arp_notes;  /* NOTES: 0 the key's 7th (or the ring's own chord), 1 triad, 2 9th, 3 sus, 4 octaves, 5 1-5-8 */
+    uint8_t  arp_rhythm; /* RHYTHM: ROTO_ARP_RHYTHMS patterns of 16 (0: every step) */
+    uint8_t  arp_accent; /* ACCENT: 0 the beat, 1 flat, 2 the off-beat */
+    uint8_t  arp_restart;/* HOLD: 0 carries on across hits, 1 starts again on each */
+    uint8_t  a_ch, a_chn[4], a_sub, a_fresh;   /* audio side: CHORD's notes sounding; ticks left in this cycle; start */
+    uint16_t a_pos;      /* arp steps played (RHYTHM's place) */
+    uint32_t a_last16;   /* the 1/16 (+1) the arp last stepped on */
     /* audio side: the arp of the last hit */
     uint8_t  a_n, a_idx, a_dir, a_k, a_on, a_vel;
     uint8_t  a_notes[16];
@@ -103,6 +110,7 @@ typedef struct {
     int8_t   flt[ROTO_PARTS][4];   /* FILTER, for the screen, K1..K4: bright, edge 0..100, env -100..100, drive 0..100 (-128: the sound has none) */
     char     flt_lbl[ROTO_PARTS][4][6];   /* the sound's own names for them ("CUT", "RES", ...) */
     uint8_t  spage;      /* SOUND screen: 0 choose, 1 shape 1-4, 2 shape 5-8 */
+    uint8_t  apage;      /* ARP screen: 0 MODE RATE RANGE LENGTH, 1 NOTES RHYTHM ACCENT HOLD */
     int8_t   ed[8];      /* SHAPE: the sound's eight settings 0..100 (-128: none), for the screen (ui_input.c fills it) */
     char     ed_lbl[8][6];   /* their names */
     char     ed_txt[8][7];   /* their values as text ("64%", "SAW") */
@@ -133,7 +141,14 @@ typedef struct {
 #define ROTO_ARP_UPDOWN 3
 #define ROTO_ARP_RANDOM 4
 #define ROTO_ARP_PEDAL  5   /* the lowest note between each of the others */
-#define ROTO_ARP_MODES  6   /* (with OFF) */
+#define ROTO_ARP_DOWNUP 6
+#define ROTO_ARP_CONVERGE 7 /* outside in: lowest, highest, next lowest ... */
+#define ROTO_ARP_CHORD  8   /* the notes together, again and again */
+#define ROTO_ARP_MODES  9   /* (with OFF) */
+#define ROTO_ARP_RATES  7
+#define ROTO_ARP_SHAPES 6
+#define ROTO_ARP_RHYTHMS 10
+const char *roto_arp_rhythm_name(uint32_t r);
 #define ROTO_VIEW_SND    6
 
 /* what a knob just changed, for roto_ui_show() (the centre shows it for a moment) */
@@ -178,6 +193,7 @@ void roto_euclid(uint32_t trk, uint32_t hits); /* exactly `hits` hits, spread ev
 /* FILTER: for a sound engine (engines.c numbering), which of its 8 edit settings is BRIGHT, EDGE
  * and DRIVE (0xFF: none), and whether it follows the envelope-to-filter amount (P_ED_FLT) */
 void roto_tone_map(uint32_t eng, uint8_t out[3], int *has_env);
+uint32_t roto_tone_k3(uint32_t eng);   /* FILTER K3 where the sound has no filter envelope: its setting, or 0xFF */
 
 /* DELAY TIME (params.c N_DTIME numbering): its name, its length in 1/96 of a bar, and the next one
  * longer (dir > 0) or shorter, so K1 runs through them in order of length */
