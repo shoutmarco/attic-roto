@@ -1547,6 +1547,15 @@ static void ui_notices(void)
     }
 }
 
+/* attic-roto: the SOUND screen's slot e of engine eng: SAMPLE has two empty places on its second page, where
+ * TUNE and LOOP (from the first) come again, so all four knobs do something */
+static uint32_t ri_slot(uint32_t eng, uint32_t e)
+{
+    if (eng == 4u && e == 5u) return 1u;
+    if (eng == 4u && e == 7u) return 3u;
+    return e;
+}
+
 static void ri_pct(char *b, uint32_t v)               /* attic-roto: "57%" */
 {
     uint32_t i = 0;
@@ -1574,7 +1583,21 @@ static void ui_input(void)
             for (k = 0; k < n; k++) if (p[k] == roto.name_buf[roto.name_pos]) at = k;
             roto.name_buf[roto.name_pos] = CH[((at + v) % n + n) % n];
         }
-        panel_enc(EN_K3); panel_enc(EN_K4);
+        if ((v = panel_enc(EN_K3)) != 0) {                 /* K3 SAVE SLOT: a new one, or over one of yours (its name comes with it) */
+            int32_t pos = roto.name_slot, n = (int32_t)ROTO_SAVES + 1, g;
+            for (g = 0; g < n; g++) {                       /* (to the next place that is new or used) */
+                pos = ((pos + (v > 0 ? 1 : -1)) % n + n) % n;
+                if (pos == 0 || ((roto.saves_used >> (pos - 1)) & 1u)) break;
+            }
+            roto.name_slot = (uint8_t)pos;
+            if (pos) {
+                const char *nm = roto.save_name[pos - 1];
+                uint32_t c;
+                for (c = 0; c < 8u; c++) roto.name_buf[c] = ' ';
+                for (c = 0; c < 8u && nm[c]; c++) roto.name_buf[c] = nm[c];
+            }
+        }
+        if (panel_enc(EN_K4) != 0) roto.name_buf[roto.name_pos] = ' ';   /* K4 CLEAR: the letter K1 is on */
     }
     {   /* ENVELOPE: K1..K4 attack, decay, sustain, release of the ring's sound (taken first,
          * so the sequencer knobs below see nothing on that screen) */
@@ -1583,9 +1606,11 @@ static void ui_input(void)
         uint32_t part = roto.sel < ROTO_TRACKS ? roto.trk[roto.sel].part : 0u;
         for (t = 0; t < ROTO_PARTS && t < NTRK; t++) {       /* (the screen's copy follows the sound) */
             for (e = 0; e < 4u; e++) roto.env[t][e] = (uint8_t)clamp(trk[t].p[ENV_P[e]], 0, 127);
-            if (roto.snd[t].eng == ROTO_ENG_DRUM) {          /* a drum kit has no ADSR: its SNAP, and its DECY as its length */
+            if (roto.snd[t].eng == ROTO_ENG_DRUM) {          /* a drum kit has no ADSR: its SNAP, LENGTH (DECY), KICK, ACCENT */
                 roto.env[t][0] = (uint8_t)clamp(trk[t].p[P_E0 + 4], 0, 127);
-                roto.env[t][1] = roto.env[t][2] = roto.env[t][3] = (uint8_t)clamp(trk[t].p[P_E0 + 3], 0, 127);
+                roto.env[t][1] = (uint8_t)clamp(trk[t].p[P_E0 + 3], 0, 127);
+                roto.env[t][2] = (uint8_t)(trk[t].p[P_E0 + 6] > 0 ? 127 : 0);
+                roto.env[t][3] = (uint8_t)clamp(trk[t].p[P_E0 + 5], 0, 127);
             }
         }
         if (roto.view == ROTO_VIEW_ENV && part < NTRK) {          /* (rings 5 and 6: the sound they share) */
@@ -1594,13 +1619,20 @@ static void ui_input(void)
             for (e = 0; e < 4u; e++) {
                 int32_t v = panel_enc(EN_K1 + (int32_t)e);
                 if (!v) continue;
-                if (drum) {                                   /* drums (no ADSR): K1 the hit's snap, K2..K4 its length (the kit's DECY) */
-                    uint32_t ep = e == 0u ? 4u : 3u;
-                    tk->p[P_E0 + ep] = (int16_t)clamp(tk->p[P_E0 + ep] + v * 2, 0, 127);
+                if (drum) {                                   /* drums (no ADSR): K1 SNAP, K2 LENGTH (DECY), K3 KICK, K4 ACCENT */
+                    static const uint8_t EP[4] = {4, 3, 6, 5};
+                    static const char *const EN[4] = {"SNAP", "LENGTH", "KICK", "ACCENT"};
+                    static const char *const KN[2] = {"PUNCH", "ROUND"};
+                    uint32_t ep = EP[e];
+                    char b[6];
+                    if (e == 2u) tk->p[P_E0 + ep] = (int16_t)(v > 0 ? 1 : 0);
+                    else tk->p[P_E0 + ep] = (int16_t)clamp(tk->p[P_E0 + ep] + v * 2, 0, 127);
+                    if (e == 2u) roto_ui_say(KN[tk->p[P_E0 + ep] > 0], EN[e], fm1_ms);
+                    else { ri_pct(b, (uint32_t)((tk->p[P_E0 + ep] * 100 + 63) / 127)); roto_ui_say(b, EN[e], fm1_ms); }
                 } else {
                     tk->p[ENV_P[e]] = (int16_t)clamp(tk->p[ENV_P[e]] + v * 2, 0, 127);
+                    roto_ui_show(ROTO_SHOW_ATK + e, fm1_ms);
                 }
-                roto_ui_show(ROTO_SHOW_ATK + e, fm1_ms);
             }
         }
     }
@@ -1614,13 +1646,14 @@ static void ui_input(void)
             const engine_t *en = ENGINES[tk->eng_req % NENGINES];
             int32_t v;
             for (e = 0; e < 8u; e++) {
-                const param_desc_t *pd = &en->edit[e];
+                uint32_t sl = ri_slot(tk->eng_req % NENGINES, e);
+                const param_desc_t *pd = &en->edit[sl];
                 const char *l = pd->label ? pd->label : "";
                 uint32_t c;
                 for (c = 0; c < 5u && l[c]; c++) roto.ed_lbl[e][c] = l[c];
                 roto.ed_lbl[e][c] = 0;
                 if (!pd->label || pd->max <= pd->min) { roto.ed[e] = -128; roto.ed_txt[e][0] = '-'; roto.ed_txt[e][1] = 0; continue; }
-                v = tk->p[P_E0 + e];
+                v = tk->p[P_E0 + sl];
                 roto.ed[e] = (int8_t)clamp(((v - pd->min) * 100) / (pd->max - pd->min), 0, 100);
                 if (pd->fmt == F_ENUM && pd->names && pd->names[clamp(v - pd->min, 0, pd->max - pd->min)]) {
                     const char *n = pd->names[clamp(v - pd->min, 0, pd->max - pd->min)];
@@ -1677,7 +1710,7 @@ static void ui_input(void)
                     }
                 } else {
                     for (e = 0; e < 4u; e++) {
-                        uint32_t m = (roto.spage - 1u) * 4u + e;
+                        uint32_t m = ri_slot(tk->eng_req % NENGINES, (roto.spage - 1u) * 4u + e);
                         const param_desc_t *pd = &en->edit[m];
                         int32_t step;
                         if ((v = panel_enc(EN_K1 + (int32_t)e)) == 0) continue;
@@ -1708,7 +1741,11 @@ static void ui_input(void)
                     k->arp_rate = SLOWEST_FIRST[clamp(at + v, 0, ROTO_ARP_RATES - 1)];
                     roto_ui_show(ROTO_SHOW_A2, fm1_ms);
                 }
-                if ((v = panel_enc(EN_K3)) != 0) { k->arp_range = (uint8_t)clamp((int32_t)k->arp_range + v, 1, 4); roto_ui_show(ROTO_SHOW_A3, fm1_ms); }
+                if ((v = panel_enc(EN_K3)) != 0) {           /* RANGE (a drum ring: ROLL FADE, 1 flat, 2..4 fading, 5..7 swelling) */
+                    int drum = roto.snd[k->part].eng == ROTO_ENG_DRUM;
+                    k->arp_range = (uint8_t)clamp((int32_t)k->arp_range + v, 1, drum ? 7 : 4);
+                    roto_ui_show(ROTO_SHOW_A3, fm1_ms);
+                }
                 if ((v = panel_enc(EN_K4)) != 0) { k->arp_len = (uint8_t)clamp((int32_t)k->arp_len + v * 10, 10, 100); roto_ui_show(ROTO_SHOW_A4, fm1_ms); }
             } else {                                         /* page 2: NOTES, RHYTHM, ACCENT, HOLD */
                 if ((v = panel_enc(EN_K1)) != 0) { k->arp_notes = (uint8_t)clamp((int32_t)k->arp_notes + v, 0, ROTO_ARP_SHAPES - 1); roto_ui_show(ROTO_SHOW_A1, fm1_ms); }
@@ -2010,6 +2047,7 @@ static void ui_input(void)
             roto.name_buf[4] = (char)('1' + (n < ROTO_SAVES ? n : ROTO_SAVES - 1u));
             roto.name_buf[8] = 0;
             roto.name_pos = 0;
+            roto.name_slot = 0;                               /* (a new save, unless K3 picks one) */
             roto.naming = 1;
             if (roto.view != ROTO_VIEW_RING && roto.view != ROTO_VIEW_EUCLID) roto.view = ROTO_VIEW_RING;
             roto_ui_show(ROTO_SHOW_NONE, fm1_ms);

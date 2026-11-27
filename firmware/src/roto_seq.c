@@ -351,8 +351,12 @@ void roto_seq_blank(void)
 static void release(uint32_t t, roto_track_t *k)
 {
     uint32_t i;
-    for (i = 0; i < k->nheld; i++) roto_note_off(k->part, k->held[i]);
+    for (i = 0; i < k->nheld; i++) {
+        roto_note_off(k->part, k->held[i]);
+        if (k->choke) roto_drum_cut(k->part, k->held[i]);   /* (a drum hit with its own LENGTH: cut here) */
+    }
     (void)t;
+    k->choke = 0;
     k->nheld = 0;
     k->gate_left = 0;
 }
@@ -442,6 +446,16 @@ static void rarp_tick(roto_track_t *k, uint32_t phase)
         uint32_t i;
         for (i = 0; i < n && i < 4u; i++) { k->a_chn[i] = k->a_notes[i]; roto_note_on(k->part, k->a_notes[i], vel); }
         k->a_ch = (uint8_t)i;
+    } else if (roto.snd[k->part].eng == ROTO_ENG_DRUM) {   /* a drum: a roll. ROLL FADE, ROLL PITCH by the repeat */
+        static const uint8_t FADE[3] = {85, 70, 55}, SW0[3] = {60, 40, 20}, SWU[3] = {10, 15, 25};
+        static const int8_t PST[6] = {0, 1, 2, -1, -2, -3};
+        uint32_t f = k->arp_range, j, r2 = k->a_roll;
+        if (f >= 2u && f <= 4u) for (j = 0; j < r2 && vel > 20u; j++) vel = (vel * FADE[f - 2u]) / 100u;
+        else if (f >= 5u && f <= 7u) { uint32_t pc = SW0[f - 5u] + SWU[f - 5u] * r2; vel = (vel * (pc < 100u ? pc : 100u)) / 100u; }
+        if (vel < 12u) vel = 12u;
+        k->a_on = k->a_notes[0];
+        roto_drum_note_on(k->part, k->a_on, (uint8_t)vel, (int32_t)PST[k->arp_notes % 6u] * (int32_t)r2);
+        if (k->a_roll < 255u) k->a_roll++;
     } else {
         k->a_on = k->a_notes[k->a_idx < n ? k->a_idx : 0u];
         roto_note_on(k->part, k->a_on, vel);
@@ -510,6 +524,7 @@ static void rarp_start(roto_track_t *k, uint32_t note, uint32_t vel)
     for (j = 0; j < n; j++) k->a_notes[j] = s[j];
     k->a_n = (uint8_t)n;
     k->a_vel = (uint8_t)(vel ? vel : 100u);
+    k->a_roll = 0;                                        /* (a drum's roll starts again on each hit) */
     if (k->arp_restart || !was) {                         /* from the start */
         k->a_dir = (uint8_t)(k->arp == ROTO_ARP_DOWNUP);
         k->a_k = 0;
@@ -557,6 +572,7 @@ static void fire_now(uint32_t t, roto_track_t *k, uint32_t step_len, uint32_t po
         static const uint8_t LEN_PCT[4] = {0, 15, 70, 100};   /* LENGTH: the ring's own, SHORT, LONG, FULL */
         uint32_t L = roto_step_len(st);
         g = (step_len * (L ? LEN_PCT[L] : (k->gate ? k->gate : 50u))) / 100u;
+        k->choke = (uint8_t)(L && roto.snd[k->part].eng == ROTO_ENG_DRUM);   /* (a drum rings out unless it has a LENGTH) */
     }
     k->gate_left = g ? g : 1u;
 }
@@ -832,7 +848,15 @@ void roto_step_edit(uint32_t trk, uint32_t step, int32_t notes_in_key, int32_t a
     k = &roto.trk[trk];
     st = &k->step[step];
     if (!st->on) return;
-    if (roto.snd[k->part].eng != ROTO_ENG_DRUM) {            /* (a drum ring keeps its drum) */
+    if (roto.snd[k->part].eng == ROTO_ENG_DRUM) {            /* a drum ring keeps its drum: K1 its CHANCE */
+        static const uint8_t CH[8] = {10, 25, 35, 50, 60, 75, 90, 0};   /* (rarely .. always: 0) */
+        int32_t at = 7;
+        if (notes_in_key) {
+            if (st->chance) for (at = 0; at < 7 && CH[at] < st->chance; at++) ;   /* (its place, or a ghost's nearest) */
+            at += notes_in_key;
+            st->chance = CH[at < 0 ? 0 : at > 7 ? 7 : at];
+        }
+    } else {
         n = st->note;
         while (notes_in_key > 0) { do n++; while (n < 96 && !roto_in_key(n)); notes_in_key--; }
         while (notes_in_key < 0) { do n--; while (n > 24 && !roto_in_key(n)); notes_in_key++; }
@@ -846,7 +870,8 @@ void roto_step_edit(uint32_t trk, uint32_t step, int32_t notes_in_key, int32_t a
     l = (int32_t)roto_step_len(st) + length;
     l = l < 0 ? 0 : l > 3 ? 3 : l;
     st->len_lo = (uint8_t)(l & 1); st->len_hi = (uint8_t)(l >> 1);
-    st->chance = 0;                                          /* (edited by hand: a real note, not a ghost) */
+    if (roto.snd[k->part].eng != ROTO_ENG_DRUM)
+        st->chance = 0;                                      /* (edited by hand: a real note, not a ghost) */
     step_belongs(k, step);
 }
 
@@ -1020,7 +1045,7 @@ static const uint8_t TONE_MAP[14][4] = {
     {2, 4, 7, 0},          /* 10 DRUM    TONE SNAP DRV  */
     {2, 3, 7, 1},          /* 11 NOISE   FREQ RES  CRSH */
     {2, 1, 4, 1},          /* 12 FM6     MLVL FB   MEG  */
-    {7, 6, 0xFF, 1},       /* 13 SLICE   TONE DCAY -    */
+    {7, 6, 3, 1},          /* 13 SLICE   TONE DCAY PTCH */
 };
 
 /* FILTER K3 on a sound with no filter envelope: another of its settings that moves the sound (DRUM TUNE, WHEEL BODY) */
@@ -1098,7 +1123,7 @@ void roto_save_give(const roto_save_t *s)
         k->arp_accent = (uint8_t)((r->arp >> 4) & 3u) % 3u; k->arp_restart = (uint8_t)((r->arp >> 6) & 1u);
         k->arp_rate = (r->arp_rate & 7u) < ROTO_ARP_RATES ? (uint8_t)(r->arp_rate & 7u) : 1u;
         k->arp_notes = (uint8_t)(((r->arp_rate >> 3) & 7u) % ROTO_ARP_SHAPES);
-        k->arp_range = (r->arp_range & 7u) >= 1u && (r->arp_range & 7u) <= 4u ? (uint8_t)(r->arp_range & 7u) : 1u;
+        k->arp_range = (r->arp_range & 7u) >= 1u ? (uint8_t)(r->arp_range & 7u) : 1u;   /* (1..4; a drum ring's ROLL FADE 1..7) */
         k->arp_rhythm = (uint8_t)(((r->arp_range >> 3) & 15u) % ROTO_ARP_RHYTHMS); k->arp_len = r->arp_len >= 10u && r->arp_len <= 100u ? r->arp_len : 50u;
         for (i = 0; i < ROTO_CHORD; i++) k->chord[i] = r->chord[i];
         for (i = 0; i < ROTO_STEPS; i++) { k->step[i] = r->step[i]; k->home[i] = r->step[i]; }

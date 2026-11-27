@@ -29,6 +29,22 @@ void roto_note_off(uint32_t t, uint8_t note)
     trk_note_off(&trk[t], note);
 }
 
+/* a drum hit st semitones off its pitch (a drum ring's ROLL PITCH) */
+void roto_drum_note_on(uint32_t t, uint8_t note, uint8_t vel, int32_t st)
+{
+    if (t >= NTRK) return;
+    drum_st_add = (int8_t)(st < -24 ? -24 : st > 24 ? 24 : st);
+    trk_note_on(&trk[t], note, vel);
+    drum_st_add = 0;
+}
+
+/* a drum hit's own LENGTH is over: it is cut (eng_drum.c drum_cut) */
+void roto_drum_cut(uint32_t t, uint8_t note)
+{
+    if (t >= NTRK || trk[t].eng_req != ROTO_ENG_DRUM) return;
+    drum_cut(&trk[t], note);
+}
+
 /* attic-roto dub throws (audio side): a ring's delay send, the delay feedback */
 void roto_fx_send(uint32_t t, uint8_t dly)
 {

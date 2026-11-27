@@ -268,8 +268,8 @@ static struct {
     uint8_t ghost[ROTO_STEPS];
     uint8_t g_swing, g_evolve, g_dub, g_rand, g_prob;
     uint16_t gnum;
-    uint8_t naming, name_pos, save_cur, mute;
-    uint8_t a_mode, a_rate, a_range, a_len, a_n, a_idx, a_shape, a_rhy, a_acc, a_rst, a_page;
+    uint8_t naming, name_pos, name_slot, save_cur, mute;
+    uint8_t a_mode, a_rate, a_range, a_len, a_n, a_idx, a_shape, a_rhy, a_acc, a_rst, a_page, a_drum;
     uint8_t a_notes[16];
     int8_t o_pitch, o_bright;
     uint8_t o_echo, o_len, o_drum, o_level;
@@ -309,6 +309,7 @@ static void rt_snapshot(void)
         uint32_t j;
         rt_sn.a_mode = k->arp; rt_sn.a_rate = k->arp_rate; rt_sn.a_range = k->arp_range; rt_sn.a_len = k->arp_len;
         rt_sn.a_shape = k->arp_notes; rt_sn.a_rhy = k->arp_rhythm; rt_sn.a_acc = k->arp_accent; rt_sn.a_rst = k->arp_restart; rt_sn.a_page = roto.apage;
+        rt_sn.a_drum = roto.snd[k->part].eng == ROTO_ENG_DRUM;
         rt_sn.a_n = k->a_n <= 16u ? k->a_n : 16u; rt_sn.a_idx = k->a_idx;
         for (j = 0; j < rt_sn.a_n; j++) rt_sn.a_notes[j] = k->a_notes[j];
         rt_sn.o_drum = roto.snd[rt_sn.part].eng == ROTO_ENG_DRUM;
@@ -319,7 +320,7 @@ static void rt_snapshot(void)
         rt_sn.o_level = roto.snd[rt_sn.part].level <= 127u ? roto.snd[rt_sn.part].level : 127u;
     }
     rt_sn.mute = roto.mute;
-    rt_sn.naming = roto.naming; rt_sn.name_pos = roto.name_pos < 8u ? roto.name_pos : 0u;
+    rt_sn.naming = roto.naming; rt_sn.name_pos = roto.name_pos < 8u ? roto.name_pos : 0u; rt_sn.name_slot = roto.name_slot;
     rt_sn.save_cur = roto.save_cur;
     {
         uint32_t c;
@@ -428,7 +429,16 @@ static void rt_draw_name_centre(void)
         rt_text_s(RT_CX - RT_TEXT_S_W("NAME") / 2, RT_CY - 26, "NAME", col);
         rt_text_b(x0, RT_CY - 10, t, 1, RT_TEXT);
         rt_rect(x0 + (int32_t)rt_sn.name_pos * 8, RT_CY + 5, x0 + (int32_t)rt_sn.name_pos * 8 + 7, RT_CY + 7, col);
-        rt_text_s(RT_CX - RT_TEXT_S_W("SAVE: KEEP") / 2, RT_CY + 14, "SAVE: KEEP", RT_GREY);
+        if (rt_sn.name_slot) {                              /* K3: over one of the saves */
+            char o[16];
+            uint32_t c;
+            const char *w = "OVER SLOT ";
+            for (c = 0; w[c]; c++) o[c] = w[c];
+            rt_fmt_u(o + c, rt_sn.name_slot);
+            rt_text_s(RT_CX - RT_TEXT_S_W(o) / 2, RT_CY + 14, o, RT_PINK);
+        } else {
+            rt_text_s(RT_CX - RT_TEXT_S_W("NEW  SAVE: KEEP") / 2, RT_CY + 14, "NEW  SAVE: KEEP", RT_GREY);
+        }
         return;
     }
     for (i = 0; i < 8u && rt_sn.name[i]; i++) n++;           /* a save's name (dialled, or just kept) */
@@ -685,6 +695,18 @@ static void rt_draw_env(void)
 
     if (rt_sn.show) {
         rt_draw_centre();
+    } else if (roto.snd[rt_sn.part].eng == ROTO_ENG_DRUM) {   /* at rest, a drum ring: its four, small */
+        char l1[20], l2[20];
+        uint32_t n;
+        const char *kn = rt_sn.env[2] ? "ROUND" : "PUNCH";
+        l1[0] = 'S'; l1[1] = 'N'; l1[2] = 'A'; l1[3] = 'P'; l1[4] = ' '; rt_fmt_u(l1 + 5, (rt_sn.env[0] * 100u + 63u) / 127u);
+        n = rt_strlen(l1); l1[n] = ' '; l1[n + 1] = ' '; l1[n + 2] = 'L'; l1[n + 3] = 'E'; l1[n + 4] = 'N'; l1[n + 5] = ' ';
+        rt_fmt_u(l1 + n + 6, (rt_sn.env[1] * 100u + 63u) / 127u);
+        for (n = 0; kn[n]; n++) l2[n] = kn[n];
+        l2[n] = ' '; l2[n + 1] = ' '; l2[n + 2] = 'A'; l2[n + 3] = 'C'; l2[n + 4] = 'C'; l2[n + 5] = ' ';
+        rt_fmt_u(l2 + n + 6, (rt_sn.env[3] * 100u + 63u) / 127u);
+        rt_text_s(RT_CX - RT_TEXT_S_W(l1) / 2, RT_CY - 9, l1, RT_GREY);
+        rt_text_s(RT_CX - RT_TEXT_S_W(l2) / 2, RT_CY + 3, l2, RT_GREY);
     } else {                                             /* at rest: the four, small */
         char l1[16], l2[16];
         uint32_t n;
@@ -1134,7 +1156,9 @@ static void rt_draw_arp(void)
     static const char *const PC[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     static const uint8_t SPOKES[ROTO_ARP_RATES] = {32, 16, 8, 24, 12, 6, 4};   /* (notes in a bar) */
     uint32_t show = rt_sn.show >= ROTO_SHOW_A1 && rt_sn.show <= ROTO_SHOW_A4 ? rt_sn.show : 0u;
-    uint32_t range = rt_sn.a_range ? (rt_sn.a_range > 4u ? 4u : rt_sn.a_range) : 1u, n = rt_sn.a_n, i;
+    static const char *const ROLL_F[8] = {"FLAT", "FLAT", "FADE 1", "FADE 2", "FADE 3", "SWELL 1", "SWELL 2", "SWELL 3"};
+    static const char *const ROLL_P[6] = {"OFF", "UP 1", "UP 2", "DOWN 1", "DOWN 2", "DOWN 3"};
+    uint32_t range = rt_sn.a_drum ? 1u : rt_sn.a_range ? (rt_sn.a_range > 4u ? 4u : rt_sn.a_range) : 1u, n = rt_sn.a_n, i;
     uint32_t on = rt_sn.a_mode && n, cur = on && rt_sn.a_idx < n ? rt_sn.a_notes[rt_sn.a_idx] : 0xFFu;
     uint16_t chord = 0;
     int32_t x, y, x1, y1, a;
@@ -1219,14 +1243,16 @@ static void rt_draw_arp(void)
     }
     {   /* top right: page 1 MODE, RATE, LENGTH; page 2 NOTES, RHYTHM, ACCENT; the one turning green */
         static const char *const LB[2][3] = {{"MODE: ", "RATE: ", "LENGTH: "}, {"NOTES: ", "RHYTHM: ", "ACCENT: "}};
+        static const char *const LBD[2][3] = {{"MODE: ", "RATE: ", "LENGTH: "}, {"ROLL PITCH: ", "RHYTHM: ", "ACCENT: "}};   /* (a drum ring) */
         static const uint8_t SH[2][3] = {{ROTO_SHOW_A1, ROTO_SHOW_A2, ROTO_SHOW_A4}, {ROTO_SHOW_A1, ROTO_SHOW_A2, ROTO_SHOW_A3}};
         uint32_t row, k, j, pg = rt_sn.a_page ? 1u : 0u;
         for (row = 0; row < 3u; row++) {
-            const char *v = pg ? (row == 0u ? SHAPE_N[rt_sn.a_shape % ROTO_ARP_SHAPES] : row == 1u ? roto_arp_rhythm_name(rt_sn.a_rhy) : ACC_N[rt_sn.a_acc % 3u])
+            const char *const *lb = rt_sn.a_drum ? LBD[pg] : LB[pg];
+            const char *v = pg ? (row == 0u ? (rt_sn.a_drum ? ROLL_P[rt_sn.a_shape % 6u] : SHAPE_N[rt_sn.a_shape % ROTO_ARP_SHAPES]) : row == 1u ? roto_arp_rhythm_name(rt_sn.a_rhy) : ACC_N[rt_sn.a_acc % 3u])
                                : (row == 0u ? MODE_N[rt_sn.a_mode % ROTO_ARP_MODES] : row == 1u ? RATE_N[rt_sn.a_rate % ROTO_ARP_RATES] : 0);
             uint32_t hot = show == SH[pg][row];
             k = 0;
-            for (j = 0; LB[pg][row][j]; j++) t[k++] = LB[pg][row][j];
+            for (j = 0; lb[row][j]; j++) t[k++] = lb[row][j];
             if (v) for (j = 0; v[j]; j++) t[k++] = v[j];
             else { rt_fmt_u(t + k, rt_sn.a_len); k = rt_strlen(t); t[k++] = '%'; }
             t[k] = 0;
@@ -1241,6 +1267,11 @@ static void rt_draw_arp(void)
             const char *h = rt_sn.a_rst ? "HOLD: RESTART" : "HOLD: CARRY ON";
             for (k = 0; h[k]; k++) t[k] = h[k];
             t[k] = 0;
+        } else if (rt_sn.a_drum) {                        /* a drum ring: K3 is the roll's fade */
+            const char *h = ROLL_F[rt_sn.a_range & 7u];
+            t[0] = 'R'; t[1] = 'O'; t[2] = 'L'; t[3] = 'L'; t[4] = ':'; t[5] = ' ';
+            for (k = 0; h[k]; k++) t[6 + k] = h[k];
+            t[6 + k] = 0;
         } else {
             t[0] = 'R'; t[1] = 'A'; t[2] = 'N'; t[3] = 'G'; t[4] = 'E'; t[5] = ' '; rt_fmt_u(t + 6, range);
             k = rt_strlen(t); t[k] = ' '; t[k + 1] = 'O'; t[k + 2] = 'C'; t[k + 3] = 'T'; t[k + 4] = 0;
@@ -1773,6 +1804,12 @@ void roto_ui_say_step(uint32_t now_ms)        /* "D#3" over "ACCENT 92  LONG" (a
         const char *n = roto_piece_name(roto_piece_of(roto.sel));
         for (; n[i] && i < 11u; i++) b[i] = n[i];
         b[i] = 0;
+        if (st->chance && i + 4u < sizeof b) {              /* (K1 CHANCE: how often it plays) */
+            b[i++] = ' ';
+            rt_fmt_u(b + i, st->chance);
+            i = rt_strlen(b);
+            b[i++] = '%'; b[i] = 0;
+        }
     } else {
         const char *n = PCN[st->note % 12u];
         for (; n[i]; i++) b[i] = n[i];
@@ -1816,7 +1853,7 @@ static uint32_t rt_ring_sig(void)
     h = rt_fnv(h, rt_sn.len);
     h = rt_fnv(h, rt_sn.view);
     h = rt_fnv(h, rt_sn.show);
-    h = rt_fnv(h, rt_sn.naming); h = rt_fnv(h, rt_sn.name_pos);
+    h = rt_fnv(h, rt_sn.naming); h = rt_fnv(h, rt_sn.name_pos); h = rt_fnv(h, rt_sn.name_slot);
     { uint32_t c; for (c = 0; c < 8u; c++) h = rt_fnv(h, (uint8_t)rt_sn.name[c]); }
     if (rt_sn.show == ROTO_SHOW_TEXT) { uint32_t c; for (c = 0; rt_say_big[c]; c++) h = rt_fnv(h, (uint8_t)rt_say_big[c]); for (c = 0; rt_say_small[c]; c++) h = rt_fnv(h, (uint8_t)rt_say_small[c]); }
     if (rt_sn.show) { h = rt_fnv(h, rt_sn.gnum); h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); h = rt_fnv(h, rt_sn.div); h = rt_fnv(h, rt_sn.bpm); }
@@ -1837,7 +1874,7 @@ static uint32_t rt_ring_sig(void)
     if (rt_sn.view == ROTO_VIEW_ARP) {
         uint32_t j;
         h = rt_fnv(h, rt_sn.a_mode); h = rt_fnv(h, rt_sn.a_rate); h = rt_fnv(h, rt_sn.a_range); h = rt_fnv(h, rt_sn.a_len); h = rt_fnv(h, rt_sn.a_n);
-        h = rt_fnv(h, rt_sn.a_shape | (rt_sn.a_rhy << 3) | (rt_sn.a_acc << 7) | (rt_sn.a_rst << 9) | (rt_sn.a_page << 10));
+        h = rt_fnv(h, rt_sn.a_shape | (rt_sn.a_rhy << 3) | (rt_sn.a_acc << 7) | (rt_sn.a_rst << 9) | (rt_sn.a_page << 10) | (rt_sn.a_drum << 11));
         for (j = 0; j < rt_sn.a_n; j++) h = rt_fnv(h, rt_sn.a_notes[j]);
     }
     if (rt_sn.view == ROTO_VIEW_GLO) { h = rt_fnv(h, (uint8_t)rt_sn.o_pitch); h = rt_fnv(h, (uint8_t)rt_sn.o_bright); h = rt_fnv(h, rt_sn.o_echo); h = rt_fnv(h, rt_sn.o_len); h = rt_fnv(h, rt_sn.o_drum); h = rt_fnv(h, rt_sn.o_level); }

@@ -207,6 +207,9 @@ int roto_save_keep(const char *name)
     for (n = 0; n < ROTO_SAVES && ((roto.saves_used >> n) & 1u); n++) ;
     if (n == ROTO_SAVES)                                  /* all eight used: over the oldest */
         for (n = 0, i = 1; i < ROTO_SAVES; i++) if (roto_save_order[i] < roto_save_order[n]) n = i;
+    if (roto.name_slot >= 1u && roto.name_slot <= ROTO_SAVES && ((roto.saves_used >> (roto.name_slot - 1u)) & 1u))
+        n = roto.name_slot - 1u;                          /* (SAVE K3: over the one picked) */
+    roto.name_slot = 0;
     roto_saves_obj(n / 4u);
     s = &roto_saves[n % 4u];
     roto_save_take(s);

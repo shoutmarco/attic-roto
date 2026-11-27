@@ -62,13 +62,16 @@ typedef struct {
     int8_t   transp;     /* GLO PITCH: semitones on this ring's notes (not on a drum kit's: its pieces would change) */
     uint8_t  arp;        /* ARP: 0 off, ROTO_ARP_UP .. ROTO_ARP_CHORD */
     uint8_t  arp_rate;   /* 0 1/32, 1 1/16, 2 1/8, 3 1/16T, 4 1/8T, 5 1/8D, 6 1/4 */
-    uint8_t  arp_range;  /* octaves 1..4 */
+    uint8_t  arp_range;  /* octaves 1..4; a drum ring: ROLL FADE 1 flat, 2..4 fading, 5..7 swelling */
     uint8_t  arp_len;    /* each arp note's length, percent of the rate (10..100) */
-    uint8_t  arp_notes;  /* NOTES: 0 the key's 7th (or the ring's own chord), 1 triad, 2 9th, 3 sus, 4 octaves, 5 1-5-8 */
+    uint8_t  arp_notes;  /* NOTES: 0 the key's 7th (or the ring's own chord), 1 triad, 2 9th, 3 sus, 4 octaves, 5 1-5-8;
+                          * a drum ring: ROLL PITCH 0 off, 1 2 up, 3 4 5 down (semitones a repeat) */
     uint8_t  arp_rhythm; /* RHYTHM: ROTO_ARP_RHYTHMS patterns of 16 (0: every step) */
     uint8_t  arp_accent; /* ACCENT: 0 the beat, 1 flat, 2 the off-beat */
     uint8_t  arp_restart;/* HOLD: 0 carries on across hits, 1 starts again on each */
     uint8_t  a_ch, a_chn[4], a_sub, a_fresh;   /* audio side: CHORD's notes sounding; ticks left in this cycle; start */
+    uint8_t  a_roll;     /* audio side, a drum ring's arp: repeats since the hit (ROLL FADE, ROLL PITCH) */
+    uint8_t  choke;      /* audio side, a drum ring: the hit sounding has a LENGTH of its own (cut at its end) */
     uint16_t a_pos;      /* arp steps played (RHYTHM's place) */
     uint32_t a_last16;   /* the 1/16 (+1) the arp last stepped on */
     /* audio side: the arp of the last hit */
@@ -126,6 +129,7 @@ typedef struct {
     uint8_t  save_cur;   /* the save last loaded or kept (0xFF: none) */
     uint8_t  naming;     /* SAVE pressed: the name is being set (K1 moves, K2 the letter; SAVE keeps, HOME cancels) */
     uint8_t  name_pos;   /* the letter K1 is on */
+    uint8_t  name_slot;  /* K3: 0 a new save (or over the oldest), 1..ROTO_SAVES over that save */
     char     name_buf[9];
     uint16_t gnum;       /* PRESETS: the groove number being dialled (shown while turning; 0: none) */
     uint8_t  grand;      /* GROOVE RANDOM: 0..100, each hit a little softer or later at random (up to -40 % velocity, +15 ms) */
@@ -257,6 +261,8 @@ void roto_stop(void);
 /* the voice side (seq.c) */
 void roto_note_on(uint32_t trk, uint8_t note, uint8_t vel);
 void roto_note_off(uint32_t trk, uint8_t note);
+void roto_drum_note_on(uint32_t trk, uint8_t note, uint8_t vel, int32_t st);   /* (a drum, st semitones off) */
+void roto_drum_cut(uint32_t trk, uint8_t note);   /* (a drum hit's own LENGTH is over) */
 void roto_fx_send(uint32_t trk, uint8_t dly);   /* a dub throw: the ring's delay send */
 void roto_fx_feedback(uint8_t fb);              /* ... and the delay feedback */
 

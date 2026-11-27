@@ -209,6 +209,10 @@ static voice_t *drum_reuse(track_t *t, uint32_t note)
     return v->active && (uint32_t)v->s[0] == lane ? v : 0;
 }
 
+/* attic-roto: semitones on the next hits (a drum ring's ROLL PITCH; 0 otherwise), set around its note on */
+static int8_t drum_st_add;
+static uint8_t drum_cut_lanes[NTRK];                     /* attic-roto: lanes to cut, a bit each (drum_cut) */
+
 static void drum_note_on(track_t *t, voice_t *v)
 {
     drum_lane_t *K = drum_kit_of(t), *L;
@@ -227,8 +231,10 @@ static void drum_note_on(track_t *t, voice_t *v)
         L->key.type = 0xFF;
         L->role = (uint8_t)role;
     }
-    L->st = (int8_t)st;
+    st += drum_st_add;
+    L->st = (int8_t)(st < -24 ? -24 : st > 24 ? 24 : st);
     L->owner = (uint8_t)(i + 1u);                        /* (its last voice, if another, ends: drum_amp) */
+    if ((uint32_t)(t - trk) < NTRK) drum_cut_lanes[t - trk] &= (uint8_t)~(1u << lane);   /* (attic-roto: a new hit) */
     v->s[0] = (int32_t)lane;
     v->env_out = v->vel * 258;                           /* the hit starts at its level (no ramp from 0) */
     v->env = 1 << 24;                                    /* the ADSR held at full from here, not from drum_amp:
@@ -237,6 +243,14 @@ static void drum_note_on(track_t *t, voice_t *v)
     dv_trigger(&L->v);
     if (lane == DV_HATC && K[DV_HATO].v.live)            /* a closed hat chokes the open one */
         dv_choke(&K[DV_HATO].v);
+}
+
+/* attic-roto: a hit with a LENGTH of its own is cut at its end: its voice fades out over one block and ends
+ * (drum_amp). A lane's bit, per track (drum_cut_lanes); a new hit on the lane clears it */
+static void drum_cut(track_t *t, uint32_t note)
+{
+    uint32_t i = (uint32_t)(t - trk);
+    if (i < NTRK) drum_cut_lanes[i] |= (uint8_t)(1u << drum_lane(note));
 }
 
 /* the voice's amplitude: the hit, not the ADSR (which still runs, held at full so a release never ends
@@ -249,6 +263,13 @@ static int32_t drum_amp(track_t *t, voice_t *v, int32_t adsr)
         return 0;
     if (!L || (!L->v.live && !L->v.trig)) {
         v->active = v->gate = 0;
+        v->stage = 0;
+        v->env = 0;
+        return 0;
+    }
+    if ((uint32_t)(t - trk) < NTRK && ((drum_cut_lanes[t - trk] >> ((uint32_t)v->s[0] & (DV_NLANE - 1u))) & 1u)) {
+        drum_cut_lanes[t - trk] &= (uint8_t)~(1u << ((uint32_t)v->s[0] & (DV_NLANE - 1u)));   /* attic-roto: cut */
+        v->active = v->gate = 0;                         /* (this block fades from its level to 0, then it is over) */
         v->stage = 0;
         v->env = 0;
         return 0;
