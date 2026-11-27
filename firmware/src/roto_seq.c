@@ -690,6 +690,72 @@ static void evolve_once(void)
     (void)s;                                                 /* (the rest: nothing this time) */
 }
 
+/* -------- the two delays (fx.c): each ring sends to A, to B or to none, by its own amount. A drum ring's
+ * hits send by their lanes (rings 1, 5 and 6 share one kit: each its own lanes) */
+void roto_delay_from_sounds(void)
+{
+    uint32_t t;
+    for (t = 0; t < ROTO_TRACKS; t++) {
+        roto.trk[t].dly_bus = 1;
+        roto.trk[t].dly_send = roto.snd[roto.trk[t].part % ROTO_PARTS].dly;
+    }
+    roto.btime = roto.dtime; roto.bfdbk = roto.dfdbk; roto.bcolor = roto.dcolor;
+}
+
+static int ring_of_part(uint32_t p)                          /* the first ring on part p, or -1 */
+{
+    uint32_t t;
+    for (t = 0; t < ROTO_TRACKS; t++) if (roto.trk[t].part == p) return (int)t;
+    return -1;
+}
+
+void roto_delay_apply(void)
+{
+    uint32_t p, t, s;
+    int thr_b = 0;
+    for (p = 0; p < ROTO_PARTS && p < NTRK; p++) {
+        if (roto.snd[p].eng == ROTO_ENG_DRUM) {              /* a kit: each ring's lanes */
+            uint8_t ls[8] = {0, 0, 0, 0, 0, 0, 0, 0}, lb = 0;
+            uint32_t pass, strong = 0;                       /* (a lane a ring's hits play beats one only its drum names) */
+            for (pass = 0; pass < 2u; pass++)
+                for (t = 0; t < ROTO_TRACKS; t++) {
+                    const roto_track_t *k = &roto.trk[t];
+                    uint32_t lanes = 0, l, snd;
+                    if (k->part != p) continue;
+                    if (pass) { for (s = 0; s < ROTO_STEPS; s++) if (k->step[s].on) lanes |= 1u << (roto_drum_lane(k->step[s].note) & 7u); }
+                    else if (k->fill_note) lanes = 1u << (roto_drum_lane(k->fill_note) & 7u);
+                    snd = k->dly_bus ? k->dly_send : 0u;
+                    for (l = 0; l < 8u; l++) {
+                        if (!((lanes >> l) & 1u)) continue;
+                        if (pass && ((strong >> l) & 1u) && ls[l] >= snd) continue;   /* (two rings on one lane: the more) */
+                        if (!pass && ((strong >> l) & 1u)) continue;
+                        ls[l] = (uint8_t)snd;
+                        if (k->dly_bus == 2u) lb |= (uint8_t)(1u << l); else lb &= (uint8_t)~(1u << l);
+                        if (pass) strong |= 1u << l;
+                    }
+                }
+            roto_fx_drum_lanes(p, 1, ls, lb);
+            roto_fx_route(p, 0);
+        } else {
+            int r = ring_of_part(p);
+            const roto_track_t *k = r >= 0 ? &roto.trk[r] : 0;
+            uint32_t bus = k ? k->dly_bus : 1u;
+            roto_fx_drum_lanes(p, 0, 0, 0);
+            roto_fx_route(p, bus == 2u ? 1u : bus == 1u ? 0u : 2u);
+            if (k) roto.snd[p].dly = k->dly_send;            /* (what a dub throw comes back to) */
+            if (roto.throw_trk == p) { if (bus == 2u) thr_b = 1; }
+            else trk[p].p[P_DLY] = (int16_t)(k ? k->dly_send : roto.snd[p].dly);
+        }
+    }
+    song.g[G_DTIME] = roto.dtime;
+    song.g[G_DCOLOR] = roto.dcolor;
+    if (roto.throw_trk >= ROTO_PARTS) song.g[G_DFDBK] = roto.dfdbk;
+    {
+        uint32_t fb = roto.bfdbk + (thr_b ? 16u : 0u);          /* (a throw into B: its feedback up, as A's) */
+        roto_fx_delay_b(roto.btime, (uint8_t)(thr_b && fb > 82u ? (roto.bfdbk > 82u ? roto.bfdbk : 82u) : fb), roto.bcolor);
+    }
+}
+
 /* -------- dub throws: now and then a stab or blip ring is thrown into the delay for a bar */
 static void throw_bar(void)
 {
@@ -699,10 +765,13 @@ static void throw_bar(void)
     if (ev_dice(100u) < (uint32_t)roto.dub / 4u) {           /* DUB 50: a throw in about 1 bar of 8 (fired off now and then) */
         uint32_t t = 2u + ev_dice(2u);
         uint32_t d = (uint32_t)roto.snd[t].dly + 50u, fb = (uint32_t)roto.dfdbk + 16u;
+        int r = ring_of_part(t);
+        uint32_t bus = r >= 0 ? roto.trk[r].dly_bus : 1u;
+        if (!bus) return;                                        /* (a ring with no delay is not thrown) */
         roto.throw_trk = (uint8_t)t;
         roto.throw_left = 16;
         roto_fx_send(t, (uint8_t)(d > 127u ? 127u : d));
-        roto_fx_feedback((uint8_t)(fb > 82u ? 82u : fb));
+        if (bus == 1u) roto_fx_feedback((uint8_t)(fb > 82u ? 82u : fb));   /* (into B: roto_delay_apply) */
     }
 }
 
@@ -1087,11 +1156,16 @@ void roto_save_take(roto_save_t *s)
     s->bpm = roto.bpm; s->swing = roto.swing; s->root = roto.root; s->mode = roto.mode;
     s->dtime = roto.dtime; s->dfdbk = roto.dfdbk; s->dcolor = roto.dcolor; s->evolve = roto.evolve; s->dub = roto.dub;
     s->rsv[0] = roto.grand; s->rsv[1] = (uint8_t)(100u - roto.gprob);   /* (stored as the drop chance: an older save's 0 is 100 %) */
+    s->dtime = (uint8_t)(roto.dtime | (roto.btime << 4));                  /* delay B in spare bits; rsv[2] bit 7: saved so */
+    s->rsv[2] = (uint8_t)(0x80u | (roto.bfdbk > 120u ? 120u : roto.bfdbk));
+    s->mode = (uint8_t)(roto.mode | ((roto.bcolor >> 1) << 2));
     for (t = 0; t < ROTO_TRACKS; t++) {
         const roto_track_t *k = &roto.trk[t];
         roto_save_ring_t *r = &s->ring[t];
         for (i = 0; i < ROTO_STEPS; i++) r->step[i] = k->step[i];
-        r->len = k->len; r->div = k->div; r->gate = k->gate; r->part = k->part;
+        r->len = k->len; r->gate = k->gate;
+        r->div = (uint8_t)(k->div | ((k->dly_send & 7u) << 3));                 /* (the delay: spare bits) */
+        r->part = (uint8_t)(k->part | ((k->dly_bus & 3u) << 2) | ((k->dly_send >> 3) << 4));
         r->prob = k->prob; r->fill_note = k->fill_note; r->rot = k->rot; r->lag = k->lag;
         r->transp = k->transp; r->arp = (uint8_t)(k->arp | (k->arp_accent << 4) | (k->arp_restart << 6));
         r->arp_rate = (uint8_t)(k->arp_rate | (k->arp_notes << 3)); r->arp_range = (uint8_t)(k->arp_range | (k->arp_rhythm << 3)); r->arp_len = k->arp_len;
@@ -1106,16 +1180,18 @@ void roto_save_give(const roto_save_t *s)
     roto.seed = s->gnum;
     roto.bpm = s->bpm < 40u ? 40u : s->bpm > 240u ? 240u : s->bpm;
     roto.swing = s->swing < 50u || s->swing > 75u ? 50u : s->swing;
-    roto.root = s->root % 12u; roto.mode = s->mode % 3u;
-    roto.dtime = s->dtime; roto.dfdbk = s->dfdbk; roto.dcolor = s->dcolor;
+    roto.root = s->root % 12u; roto.mode = (uint8_t)((s->mode & 3u) % 3u);
+    roto.dtime = (uint8_t)((s->dtime & 15u) < 13u ? s->dtime & 15u : 10u); roto.dfdbk = s->dfdbk; roto.dcolor = s->dcolor;
     roto.evolve = s->evolve <= 100u ? s->evolve : 50u; roto.dub = s->dub <= 100u ? s->dub : 50u;
     roto.grand = s->rsv[0] <= 100u ? s->rsv[0] : 0u; roto.gprob = (uint8_t)(s->rsv[1] <= 100u ? 100u - s->rsv[1] : 100u);
     for (t = 0; t < ROTO_TRACKS; t++) {
         roto_track_t *k = &roto.trk[t];
         const roto_save_ring_t *r = &s->ring[t];
         k->len = r->len >= 1u && r->len <= ROTO_STEPS ? r->len : 16u;
-        k->div = r->div >= 1u && r->div <= 4u ? r->div : 1u;
-        k->gate = r->gate ? r->gate : 50u; k->part = r->part % ROTO_PARTS;
+        k->div = (r->div & 7u) >= 1u && (r->div & 7u) <= 4u ? (uint8_t)(r->div & 7u) : 1u;
+        k->gate = r->gate ? r->gate : 50u; k->part = (uint8_t)((r->part & 3u) % ROTO_PARTS);
+        k->dly_bus = (uint8_t)((r->part >> 2) & 3u) % 3u;
+        k->dly_send = (uint8_t)(((r->part >> 4) << 3) | ((r->div >> 3) & 7u));
         k->prob = r->prob <= 100u ? r->prob : 100u; k->fill_note = r->fill_note; k->rot = r->rot;
         k->lag = r->lag <= 40u ? r->lag : 0u;
         k->transp = r->transp >= -12 && r->transp <= 12 ? r->transp : 0;
@@ -1131,6 +1207,13 @@ void roto_save_give(const roto_save_t *s)
         if (k->pos != ROTO_POS_START && k->pos >= k->len) k->pos = 0;
     }
     for (t = 0; t < ROTO_PARTS; t++) roto.snd[t] = s->snd[t];
+    if (s->rsv[2] & 0x80u) {                                 /* the two delays as saved */
+        roto.btime = (uint8_t)((s->dtime >> 4) < 13u ? s->dtime >> 4 : 10u);
+        roto.bfdbk = (uint8_t)(s->rsv[2] & 0x7Fu);
+        roto.bcolor = (uint8_t)((s->mode >> 2) << 1);
+    } else {
+        roto_delay_from_sounds();                            /* (an older save: every ring into A, as it sounded) */
+    }
 }
 
 /* ------------------------------------------------------------- SOUND (UI side) */

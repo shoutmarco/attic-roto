@@ -71,6 +71,8 @@ typedef struct {
     uint8_t  arp_restart;/* HOLD: 0 carries on across hits, 1 starts again on each */
     uint8_t  a_ch, a_chn[4], a_sub, a_fresh;   /* audio side: CHORD's notes sounding; ticks left in this cycle; start */
     uint8_t  a_roll;     /* audio side, a drum ring's arp: repeats since the hit (ROLL FADE, ROLL PITCH) */
+    uint8_t  dly_bus;    /* FX: the ring's delay, 0 none, 1 A, 2 B */
+    uint8_t  dly_send;   /* FX: how much of the ring goes into it (0..127) */
     uint8_t  choke;      /* audio side, a drum ring: the hit sounding has a LENGTH of its own (cut at its end) */
     uint16_t a_pos;      /* arp steps played (RHYTHM's place) */
     uint32_t a_last16;   /* the 1/16 (+1) the arp last stepped on */
@@ -104,6 +106,7 @@ typedef struct {
     uint8_t  mode;       /* 0 aeolian, 1 dorian, 2 phrygian */
     uint8_t  dtime, dfdbk;   /* the delay (song.g G_DTIME / G_DFDBK): what dub throws come back to; DELAY edits it */
     uint8_t  dcolor;     /* the delay's colour (song.g G_DCOLOR), for the screen */
+    uint8_t  btime, bfdbk, bcolor;   /* delay B: TIME, FEEDBACK, COLOUR (delay A: dtime, dfdbk, dcolor) */
     uint32_t seed;
     uint8_t  view;       /* the screen: ROTO_VIEW_RING / ROTO_VIEW_EUCLID (UI side) */
     uint8_t  swing;      /* 50 = straight; 50..75: the off 1/16s later */
@@ -209,6 +212,8 @@ uint32_t roto_tone_k3(uint32_t eng);   /* FILTER K3 where the sound has no filte
 const char *roto_dtime_name(uint32_t t);
 uint32_t roto_dtime_96(uint32_t t);
 uint32_t roto_dtime_step(uint32_t t, int32_t dir);
+void roto_delay_from_sounds(void);   /* every ring into delay A at its sound's send, B as A (a groove, an older save) */
+void roto_delay_apply(void);         /* (UI side, every pass) the rings' delays to the audio side */
 
 /* SOUND: the sounds by kind. Pitched: categories of (engine, preset); drums: kits and pieces. */
 #define ROTO_ENG_DRUM 10u
@@ -265,6 +270,10 @@ void roto_drum_note_on(uint32_t trk, uint8_t note, uint8_t vel, int32_t st);   /
 void roto_drum_cut(uint32_t trk, uint8_t note);   /* (a drum hit's own LENGTH is over) */
 void roto_fx_send(uint32_t trk, uint8_t dly);   /* a dub throw: the ring's delay send */
 void roto_fx_feedback(uint8_t fb);              /* ... and the delay feedback */
+void roto_fx_route(uint32_t trk, uint32_t bus);  /* a part's delay: 0 A, 1 B, 2 none */
+void roto_fx_delay_b(uint8_t time, uint8_t fb, uint8_t col);   /* delay B's TIME, FEEDBACK, COLOUR */
+void roto_fx_drum_lanes(uint32_t trk, int on, const uint8_t *ls, uint8_t lb);   /* a drum part's lanes' own sends */
+uint32_t roto_drum_lane(uint32_t note);         /* the drum lane a note strikes (0..7) */
 
 /* UI hooks (roto_ui.c), called from ui_input.c / ui_draw.c */
 int  roto_ui_input(uint32_t pressed, uint32_t notes, uint32_t held);   /* notes: keys just pressed; held: keys down now */

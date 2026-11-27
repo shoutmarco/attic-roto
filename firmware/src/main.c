@@ -256,6 +256,8 @@ void roto_apply_sounds(void)
     song.g[G_DTIME] = roto.dtime;
     song.g[G_DFDBK] = roto.dfdbk;
     roto.dcolor = (uint8_t)clamp(song.g[G_DCOLOR], 0, 127);   /* (the colour stays as it was) */
+    roto_delay_from_sounds();                 /* (a new groove: every ring into delay A, B set as A) */
+    roto_delay_apply();
 }
 
 static void fm1_main(void)

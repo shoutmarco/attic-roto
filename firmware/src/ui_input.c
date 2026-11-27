@@ -1573,6 +1573,7 @@ static void ui_input(void)
      *   EUCLID  K1 FILL    K2 ROTATE  K3 LENGTH  K4 PROB   (as the euclid reference)
      * SELECT the tempo, ALGO which ring; PRESET does nothing here.
      * Every turn shows its value in the centre for a moment (roto_ui_show). */
+    roto_delay_apply();  /* (the rings' delays to the audio side) */
     if (roto.naming) {   /* SAVE: naming. K1 moves along the name, K2 changes the letter; the other dials rest */
         static const char CH[] = ROTO_NAME_CHARS;
         int32_t v, k;
@@ -1777,9 +1778,9 @@ static void ui_input(void)
                 }
                 roto_ui_show(ROTO_SHOW_O2, fm1_ms);
             }
-            if ((v = panel_enc(EN_K3)) != 0) {
-                roto.snd[part].dly = (uint8_t)clamp((int32_t)roto.snd[part].dly + v * 4, 0, 127);
-                tk->p[P_DLY] = roto.snd[part].dly;
+            if ((v = panel_enc(EN_K3)) != 0) {               /* ECHO: the ring's own send (none: into A when turned up) */
+                k->dly_send = (uint8_t)clamp((int32_t)k->dly_send + v * 4, 0, 127);
+                if (!k->dly_bus && v > 0) k->dly_bus = 1;
                 roto_ui_show(ROTO_SHOW_O3, fm1_ms);
             }
             if ((v = panel_enc(EN_K4)) != 0) { k->gate = (uint8_t)clamp((int32_t)k->gate + v * 5, 5, 100); roto_ui_show(ROTO_SHOW_O4, fm1_ms); }
@@ -1792,28 +1793,33 @@ static void ui_input(void)
         if ((v = panel_enc(EN_K3)) != 0) { roto.gprob = (uint8_t)clamp((int32_t)roto.gprob + v * 5, 0, 100); roto_ui_show(ROTO_SHOW_G3, fm1_ms); }
         if ((v = panel_enc(EN_K4)) != 0) { roto.evolve = (uint8_t)clamp((int32_t)roto.evolve + v * 5, 0, 100); roto_ui_show(ROTO_SHOW_G4, fm1_ms); }
     }
-    if (roto.view == ROTO_VIEW_DLY) {   /* DELAY: K1 TIME, K2 FEEDBACK, K3 the ring's SEND, K4 COLOUR.
-         * roto.dtime / dfdbk / snd[].dly are what dub throws come back to, so they're set first. */
+    if (roto.view == ROTO_VIEW_DLY && roto.sel < ROTO_TRACKS) {
+        /* DELAY, the selected ring's: K1 TIME, K2 FEEDBACK of the delay it uses (A or B; none: A's), K3 SEND: fully
+         * left none, then A 5 .. 100 %, then B 5 .. 100 %; K4 COLOUR. The other delay and the other rings stay as
+         * they are (roto_delay_apply gives it all to the audio side) */
+        roto_track_t *k = &roto.trk[roto.sel];
+        int b = k->dly_bus == 2u;
+        uint8_t *tm = b ? &roto.btime : &roto.dtime, *fb = b ? &roto.bfdbk : &roto.dfdbk, *co = b ? &roto.bcolor : &roto.dcolor;
         int32_t v, i;
-        uint32_t sel2 = roto.sel < ROTO_TRACKS ? roto.trk[roto.sel].part : 0u;   /* (the ring's sound) */
         if ((v = panel_enc(EN_K1)) != 0) {
-            for (i = 0; i < (v < 0 ? -v : v); i++) roto.dtime = (uint8_t)roto_dtime_step(roto.dtime, v);
-            song.g[G_DTIME] = roto.dtime;
+            for (i = 0; i < (v < 0 ? -v : v); i++) *tm = (uint8_t)roto_dtime_step(*tm, v < 0 ? -1 : 1);
             roto_ui_show(ROTO_SHOW_DTIME, fm1_ms);
         }
         if ((v = panel_enc(EN_K2)) != 0) {
-            roto.dfdbk = (uint8_t)clamp((int32_t)roto.dfdbk + v * 2, 0, 120);
-            if (roto.throw_trk >= ROTO_PARTS) song.g[G_DFDBK] = roto.dfdbk;
+            *fb = (uint8_t)clamp((int32_t)*fb + v * 2, 0, 120);
             roto_ui_show(ROTO_SHOW_DFDBK, fm1_ms);
         }
-        if ((v = panel_enc(EN_K3)) != 0) {
-            roto.snd[sel2].dly = (uint8_t)clamp((int32_t)roto.snd[sel2].dly + v * 3, 0, 127);
-            if (roto.throw_trk != sel2 && sel2 < NTRK) trk[sel2].p[P_DLY] = roto.snd[sel2].dly;
+        if ((v = panel_enc(EN_K3)) != 0) {                 /* 0 none, 1..20 A, 21..40 B (5 % a click) */
+            int32_t st = (k->dly_send * 20 + 63) / 127, pos;
+            if (st < 1) st = 1;
+            pos = !k->dly_bus ? 0 : k->dly_bus == 1u ? st : 20 + st;
+            pos = clamp(pos + v, 0, 40);
+            k->dly_bus = (uint8_t)(!pos ? 0u : pos <= 20 ? 1u : 2u);
+            k->dly_send = (uint8_t)(!pos ? k->dly_send : (((pos - 1) % 20 + 1) * 127 + 10) / 20);
             roto_ui_show(ROTO_SHOW_DSEND, fm1_ms);
         }
         if ((v = panel_enc(EN_K4)) != 0) {
-            roto.dcolor = (uint8_t)clamp((int32_t)roto.dcolor + v * 3, 0, 127);
-            song.g[G_DCOLOR] = roto.dcolor;
+            *co = (uint8_t)clamp((int32_t)*co + v * 3, 0, 127);
             roto_ui_show(ROTO_SHOW_DCOLOR, fm1_ms);
         }
     }

@@ -57,6 +57,31 @@ void roto_fx_feedback(uint8_t fb)
     song.g[G_DFDBK] = fb;
 }
 
+/* attic-roto: the two delays (fx.c). A part's send to delay A (bus 0), B (1) or none (2); delay B's settings;
+ * a drum part's lanes' own sends (on: they are used, ls 0..127 each, lb bit = that lane to B) */
+void roto_fx_route(uint32_t t, uint32_t bus)
+{
+    if (t < NTRK) fx_dly_bus[t] = (uint8_t)(bus < 3u ? bus : 0u);
+}
+
+void roto_fx_delay_b(uint8_t time, uint8_t fb, uint8_t col)
+{
+    dlyb_time = time < 13u ? time : 10u;
+    dlyb_fb = fb > 120u ? 120u : fb;
+    dlyb_col = col > 127u ? 127u : col;
+}
+
+void roto_fx_drum_lanes(uint32_t t, int on, const uint8_t *ls, uint8_t lb)
+{
+    uint32_t i;
+    if (t >= NTRK) return;
+    for (i = 0; i < DV_NLANE; i++) drum_ls[t][i] = ls ? ls[i] : 0u;
+    drum_lb[t] = lb;
+    drum_lsend_on[t] = (uint8_t)(on != 0);
+}
+
+uint32_t roto_drum_lane(uint32_t note) { return drum_lane(note); }
+
 static const uint16_t SCALE_MASK[] = {
     0xFFF,                                   /* CHR */
     (1 << 0) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 7) | (1 << 9) | (1 << 11),   /* MAJ */

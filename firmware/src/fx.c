@@ -233,11 +233,49 @@ static uint32_t div_samples(uint32_t div)
 /* the delay's TIME (params.c N_DTIME): N_DIV's ten (div_samples), then 1.5.1's dotted 1/8D 1/16D 1/4D (10, 11, 12: 3/4,
  * 3/8, 3/2 of a quarter); at most DLY_LEN - 1 samples (1.486 s): 1/4D clamps at 60 BPM and below (1/2 below 81) */
 static const uint8_t DIV_DOT[3] = {2, 3, 1};           /* 3 quarters >> this */
-static uint32_t delay_samples(void)
+static uint32_t delay_samples_of(uint32_t d)
 {
-    uint32_t d = (uint32_t)song.g[G_DTIME];
     uint32_t s = d - 10u < 3u ? (beat_samples() * 3u) >> DIV_DOT[d - 10u] : div_samples(d);
     return s < 16u ? 16u : s >= DLY_LEN ? DLY_LEN - 1u : s;
+}
+static uint32_t delay_samples(void) { return delay_samples_of((uint32_t)song.g[G_DTIME]); }
+
+/* attic-roto: TWO delays, A and B, in the one delay's memory (dly_buf: A the first half, B the second). Each keeps
+ * one sample for two (the pair's mean in; out, the samples between drawn as the mean of their neighbours), so each
+ * still reaches 1.49 s: its repeats a little darker. A: G_DTIME G_DFDBK G_DCOLOR as before; B: dlyb_*. A part's
+ * send goes to A, or to B (fx_dly_bus 1), or nowhere (2); a DRUM part's lanes each their own (eng_drum.c drum_ls) */
+#define DLH_LEN (DLY_LEN / 2u)
+static uint8_t dlyb_time = 10, dlyb_fb = 40, dlyb_col = 70;   /* delay B: TIME (N_DTIME), FEEDBACK, COLOUR */
+static uint8_t fx_dly_bus[NTRK];                              /* a part's send: 0 A, 1 B, 2 off */
+static struct { uint32_t w; int32_t lp, acc, x0, x1; uint8_t ph; } dlh[2];
+
+static void dly_half(uint32_t k, const int32_t *in, int32_t *y, uint32_t n, uint32_t dl, int32_t fb, int32_t col,
+                     int32_t dmix)
+{
+    int16_t *buf = dly_buf + k * DLH_LEN;
+    uint32_t i, d2 = dl >> 1;
+    int32_t c2 = col * 2 > 32767 ? 32767 : col * 2;           /* (the low-pass at half the rate: the same cutoff) */
+    if (d2 < 8u) d2 = 8u;
+    if (d2 > DLH_LEN - 1u) d2 = DLH_LEN - 1u;
+    for (i = 0; i < n; i++) {
+        int32_t o;
+        if (!dlh[k].ph) {
+            dlh[k].acc = in[i];
+            dlh[k].ph = 1;
+            o = (dlh[k].x0 + dlh[k].x1) >> 1;
+        } else {
+            int32_t x = buf[(dlh[k].w - d2) & (DLH_LEN - 1u)];
+            dlh[k].lp += mulq15(x - dlh[k].lp, c2);
+            buf[dlh[k].w & (DLH_LEN - 1u)] =
+                (int16_t)clamp((((dlh[k].acc + in[i]) >> 1) >> 1) + mulq15(dlh[k].lp, fb), -32768, 32767);
+            dlh[k].w++;
+            dlh[k].ph = 0;
+            dlh[k].x0 = dlh[k].x1;
+            dlh[k].x1 = x;
+            o = x;
+        }
+        y[i] += mulq15(o << 1, dmix);
+    }
 }
 
 /* ROOM (G_RTYPE 0): 4 damped combs + 2 allpasses (Freeverb-like, mono), added to out */
@@ -508,12 +546,13 @@ static void rev_clear(void)
 #if FELUCCA_CPU2
 /* the dry mix and the sends, as each core adds its parts into them (after Jangada: mx[1] is the second core's,
  * mix_block), and a part's own block (b; mx[0].b also the fade of a reverb model change, after the parts) */
-typedef struct { int32_t l[CTL], r[CTL], c[CTL], d[CTL], v[CTL], b[CTL]; } mixsum_t;
+typedef struct { int32_t l[CTL], r[CTL], c[CTL], d[CTL], e[CTL], v[CTL], b[CTL]; } mixsum_t;   /* (e: delay B) */
 static mixsum_t mx[2];
 #define mix_l (mx[0].l)
 #define mix_r (mx[0].r)
 #define send_c (mx[0].c)
 #define send_d (mx[0].d)
+#define send_e (mx[0].e)
 #define send_r (mx[0].v)
 #define part_buf (mx[0].b)
 #define SM_DECL , mixsum_t *sm                          /* mix_part / mix_spread: the sums they add into */
@@ -529,6 +568,7 @@ static int32_t part_buf[CTL];                            /* a part's block (mix_
 #define SM1_r mix_r
 #define SM1_c send_c
 #define SM1_d send_d
+#define SM1_e send_e
 #define SM1_v send_r
 #define SM1_b part_buf
 #endif
@@ -556,8 +596,8 @@ static __attribute__((noinline)) void rev_switch(const int32_t *rev_in, int32_t 
 }
 
 /* process the three buses for one block; sends in, wet stereo-equal out */
-static void fx_buses(const int32_t *cho_in, const int32_t *dly_in, const int32_t *rev_in, int32_t *wet,
-                     uint32_t n)
+static void fx_buses(const int32_t *cho_in, const int32_t *dly_in, const int32_t *dlyb_in, const int32_t *rev_in,
+                     int32_t *wet, uint32_t n)
 {
     uint32_t i, dl = delay_samples();
     int32_t fb = song.g[G_DFDBK] * 230, col = 2000 + song.g[G_DCOLOR] * 240;
@@ -580,15 +620,11 @@ static void fx_buses(const int32_t *cho_in, const int32_t *dly_in, const int32_t
             y += (c0 + (((c1 - c0) * f) >> 8)) << 1;
         }
         fx.cho_w++;
-        /* delay with a low-passed feedback */
-        x = dly_buf[(fx.dly_w - dl) & (DLY_LEN - 1u)];
-        fx.dly_lp += mulq15(x - fx.dly_lp, col);
-        dly_buf[fx.dly_w & (DLY_LEN - 1u)] =
-            (int16_t)clamp((dly_in[i] >> 1) + mulq15(fx.dly_lp, fb), -32768, 32767);
-        fx.dly_w++;
-        y += mulq15(x << 1, dmix);
+        (void)x;
         wet[i] = y;
     }
+    dly_half(0, dly_in, wet, n, dl, fb, col, dmix);               /* the delays, A and B, with low-passed feedback */
+    dly_half(1, dlyb_in, wet, n, delay_samples_of(dlyb_time), dlyb_fb * 230, 2000 + dlyb_col * 240, dmix);
     rt = song.g[G_RTYPE];
     rt = rt == 1 || rt == 2 ? rt : 0;
     hl.side = 0;
@@ -810,7 +846,7 @@ static void events_block(uint32_t n);                    /* seq.c */
 #if FELUCCA_CPU2
 static int32_t wet[CTL];                                 /* (the dry mix and the sends: mx[0], above) */
 #else
-static int32_t send_c[CTL], send_d[CTL], send_r[CTL], wet[CTL], mix_l[CTL], mix_r[CTL];
+static int32_t send_c[CTL], send_d[CTL], send_e[CTL], send_r[CTL], wet[CTL], mix_l[CTL], mix_r[CTL];
 #endif
 
 /* SPREAD (#148): a POLY or UNISON part whose SPRD is above 0. Its voices start left and right of PAN in turn (voice.c
@@ -832,7 +868,9 @@ static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_
     int32_t glb = 4096 - (pb > 0 ? pb * 64 : 0), grb = 4096 + (pb < 0 ? pb * 64 : 0);
     int32_t glm = (gla + glb) >> 1, grm = (gra + grb) >> 1, gld = (gla - glb) >> 1, grd = (gra - grb) >> 1;
     int32_t c = t->p[P_CHOR] * 258, dl = t->p[P_DLY] * 258, r = t->p[P_REV] * 258, pk = t->peak;
-    int32_t xmax = c > dl ? c : dl;
+    int32_t xmax = c > dl ? c : dl, *sdl = fx_dly_bus[(t - trk) % NTRK] == 1u ? SM(e) : SM(d);   /* (delay A or B) */
+    if (fx_dly_bus[(t - trk) % NTRK] >= 2u || drum_lsend_on[(t - trk) % NTRK])
+        dl = 0;
     xmax = 0x7FFFFFFF / ((xmax > r ? xmax : r) | 1);
     for (i = 0; i < n; i++)
         d[i] = (d[i] << 1) - b[i];                      /* left - right */
@@ -850,7 +888,7 @@ static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_
         if (c)
             SM(c)[i] += mulq15(xs, c);
         if (dl)
-            SM(d)[i] += mulq15(xs, dl);
+            sdl[i] += mulq15(xs, dl);
         if (r)
             SM(v)[i] += mulq15(xs, r);
         SM(l)[i] += ((x * glm) >> 12) + ((y * gld) >> 12);
@@ -885,6 +923,11 @@ static void mix_part(track_t *t, uint32_t n SM_DECL)
 #if FELUCCA_CPU2
     uint32_t nr;
 #endif
+    {   /* attic-roto: a drum part's lanes' own sends, this block (eng_drum.c) */
+        uint32_t ti = (uint32_t)(t - trk);
+        if (ti < NTRK && drum_lsend_on[ti])
+            for (i = 0; i < n; i++) drum_sa[ti][i] = drum_sb[ti][i] = 0;
+    }
     mod_begin(t);                                       /* the matrix's per-block values into t->p (mod.c) */
     T_SPREAD(t) = t->p[P_SPRD] > 0 && (trk_vmode(t) == V_POLY || trk_vmode(t) == V_UNISON);   /* (SPREAD, mix_spread) */
 #if FELUCCA_CPU2
@@ -919,7 +962,9 @@ static void mix_part(track_t *t, uint32_t n SM_DECL)
         int32_t lvl = LEVEL_Q12[t->p[P_LEVEL] & 127], pan = t->p[P_PAN];
         int32_t gl = 4096 - (pan > 0 ? pan * 64 : 0), gr = 4096 + (pan < 0 ? pan * 64 : 0);
         int32_t c = t->p[P_CHOR] * 258, d = t->p[P_DLY] * 258, r = t->p[P_REV] * 258, pk = t->peak;
-        int32_t xmax = c > d ? c : d;
+        int32_t xmax = c > d ? c : d, *sdl = fx_dly_bus[(t - trk) % NTRK] == 1u ? SM(e) : SM(d);   /* (delay A or B) */
+        if (fx_dly_bus[(t - trk) % NTRK] >= 2u || drum_lsend_on[(t - trk) % NTRK])
+            d = 0;                                      /* (no delay; a drum part's lanes send their own: below) */
         xmax = 0x7FFFFFFF / ((xmax > r ? xmax : r) | 1);   /* sends: loud chords at a high LEVEL */
         for (i = 0; i < n; i++) {
             int32_t x = ((b[i] >> 2) * lvl) >> 10, a = x < 0 ? -x : x;   /* pre-shift: 8 loud voices */
@@ -929,13 +974,23 @@ static void mix_part(track_t *t, uint32_t n SM_DECL)
             if (c)
                 SM(c)[i] += mulq15(xs, c);
             if (d)
-                SM(d)[i] += mulq15(xs, d);
+                sdl[i] += mulq15(xs, d);
             if (r)
                 SM(v)[i] += mulq15(xs, r);
             SM(l)[i] += (x * gl) >> 12;
             SM(r)[i] += (x * gr) >> 12;
         }
         t->peak = pk;
+    }
+    {   /* attic-roto: a drum part's lanes' own sends, at the part's LEVEL, into delay A and B */
+        uint32_t ti = (uint32_t)(t - trk);
+        if (ti < NTRK && drum_lsend_on[ti]) {
+            int32_t lv = LEVEL_Q12[t->p[P_LEVEL] & 127];
+            for (i = 0; i < n; i++) {
+                SM(d)[i] += ((drum_sa[ti][i] >> 2) * lv) >> 10;
+                SM(e)[i] += ((drum_sb[ti][i] >> 2) * lv) >> 10;
+            }
+        }
     }
     if (pf.thr)
         perf_throw(t, b, SM(d), SM(v), n);              /* perform.c: REV / ECHO THROW (1.5.1), the sends towards full */
@@ -1002,7 +1057,7 @@ static void c1_parts(uint32_t arg)                      /* arg: the parts (bit k
     uint32_t i, n = arg >> 8;
     mixsum_t *sm = &mx[1];
     for (i = 0; i < n; i++)
-        sm->l[i] = sm->r[i] = sm->c[i] = sm->d[i] = sm->v[i] = 0;
+        sm->l[i] = sm->r[i] = sm->c[i] = sm->d[i] = sm->e[i] = sm->v[i] = 0;
     for (i = 0; i < NPART; i++)
         if (arg >> i & 1u)
             mix_part(&trk[i], n, sm);
@@ -1038,7 +1093,7 @@ static void mix_block(int32_t *out, uint32_t n)
     int perf;
     int32_t mg = fx_usb_fixed ? MASTER_FULL : (int32_t)song.master_q12;   /* (USB LEVEL FIXED: MASTER after) */
     for (i = 0; i < n; i++)
-        send_c[i] = send_d[i] = send_r[i] = mix_l[i] = mix_r[i] = 0;
+        send_c[i] = send_d[i] = send_e[i] = send_r[i] = mix_l[i] = mix_r[i] = 0;
     events_block(n);
     perf = perf_begin(n);                               /* the FX hold layer at work (perform.c) */
 #if FELUCCA_CPU2
@@ -1058,6 +1113,7 @@ static void mix_block(int32_t *out, uint32_t n)
             mix_r[i] += sm->r[i];
             send_c[i] += sm->c[i];
             send_d[i] += sm->d[i];
+            send_e[i] += sm->e[i];
             send_r[i] += sm->v[i];
         }
     }
@@ -1069,7 +1125,7 @@ static void mix_block(int32_t *out, uint32_t n)
 #endif
     if (perf)
         perf_pre(mix_l, mix_r, send_d, send_r, n);
-    fx_buses(send_c, send_d, send_r, wet, n);
+    fx_buses(send_c, send_d, send_e, send_r, wet, n);
     if (hl.side)
         rev_side_mix(mix_l, mix_r, n);                  /* HALL: stereo */
     if (scope_mix)

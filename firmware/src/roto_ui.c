@@ -261,7 +261,7 @@ static struct {
     uint8_t sel, len, pos, div, bpm, hits, view, rot, prob, show;
     uint8_t env[4];
     int8_t flt[4];
-    uint8_t dtime, dfdbk, dcolor, dsend, part;
+    uint8_t dtime, dfdbk, dcolor, dsend, dbus, part;
     char flt_lbl[4][6];
     uint8_t on[ROTO_STEPS];
     uint8_t note[ROTO_STEPS];
@@ -295,7 +295,9 @@ static void rt_snapshot(void)
     rt_sn.prob = k->prob;
     rt_sn.part = (uint8_t)(k->part < ROTO_PARTS ? k->part : 0u);
     { uint32_t e; for (e = 0; e < 4u; e++) rt_sn.env[e] = (uint8_t)(roto.env[rt_sn.part][e] & 127u); }
-    rt_sn.dtime = roto.dtime; rt_sn.dfdbk = roto.dfdbk; rt_sn.dcolor = roto.dcolor; rt_sn.dsend = roto.snd[rt_sn.part].dly;
+    rt_sn.dbus = k->dly_bus;                                 /* the ring's delay (none: A's settings shown) */
+    rt_sn.dtime = k->dly_bus == 2u ? roto.btime : roto.dtime; rt_sn.dfdbk = k->dly_bus == 2u ? roto.bfdbk : roto.dfdbk;
+    rt_sn.dcolor = k->dly_bus == 2u ? roto.bcolor : roto.dcolor; rt_sn.dsend = k->dly_bus ? k->dly_send : 0u;
     {
         uint32_t e, c;
         for (e = 0; e < 4u; e++) {
@@ -315,7 +317,7 @@ static void rt_snapshot(void)
         rt_sn.o_drum = roto.snd[rt_sn.part].eng == ROTO_ENG_DRUM;
         rt_sn.o_pitch = rt_sn.o_drum ? (int8_t)(roto.ed[1] == -128 ? 50 : roto.ed[1]) : k->transp;
         rt_sn.o_bright = roto.flt[rt_sn.part][0] == -128 ? (int8_t)-1 : roto.flt[rt_sn.part][0];
-        rt_sn.o_echo = (uint8_t)((roto.snd[rt_sn.part].dly * 100u + 63u) / 127u);
+        rt_sn.o_echo = (uint8_t)(((k->dly_bus ? k->dly_send : 0u) * 100u + 63u) / 127u);
         rt_sn.o_len = k->gate;
         rt_sn.o_level = roto.snd[rt_sn.part].level <= 127u ? roto.snd[rt_sn.part].level : 127u;
     }
@@ -482,7 +484,10 @@ static void rt_draw_centre(void)
     case ROTO_SHOW_TEXT:   { uint32_t i; for (i = 0; i < 11u && rt_say_big[i]; i++) big[i] = rt_say_big[i]; big[i] = 0; } break;
     case ROTO_SHOW_DTIME: { const char *d = roto_dtime_name(rt_sn.dtime); uint32_t i; for (i = 0; d[i] && i < 6u; i++) big[i] = d[i]; big[i] = 0; } break;
     case ROTO_SHOW_DFDBK:  rt_fmt_u(big, rt_sn.dfdbk); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
-    case ROTO_SHOW_DSEND:  rt_fmt_u(big, (rt_sn.dsend * 100u + 63u) / 127u); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
+    case ROTO_SHOW_DSEND:
+        if (!rt_sn.dbus) { big[0] = 'O'; big[1] = 'F'; big[2] = 'F'; big[3] = 0; break; }
+        big[0] = rt_sn.dbus == 2u ? 'B' : 'A'; big[1] = ' ';
+        rt_fmt_u(big + 2, (rt_sn.dsend * 100u + 63u) / 127u); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
     case ROTO_SHOW_DCOLOR: rt_fmt_u(big, (rt_sn.dcolor * 100u + 63u) / 127u); w = rt_strlen(big); big[w] = '%'; big[w + 1] = 0; break;
     case ROTO_SHOW_BRIGHT: case ROTO_SHOW_EDGE: case ROTO_SHOW_FENV: case ROTO_SHOW_DRIVE: {
         int32_t v = rt_sn.flt[rt_sn.show - ROTO_SHOW_BRIGHT];
@@ -516,6 +521,9 @@ static void rt_draw_centre(void)
         const char *l = RT_DSHOWN[rt_sn.show - ROTO_SHOW_DTIME];
         uint32_t i;
         for (i = 0; l[i]; i++) small[i] = l[i];
+        if (rt_sn.show != ROTO_SHOW_DSEND) {                 /* (which delay: "TIME A") */
+            small[i++] = ' '; small[i++] = rt_sn.dbus == 2u ? 'B' : 'A';
+        }
         small[i] = 0;
         small_col = RT_TRK_COL[rt_sn.sel];
     } else if (flt_show) {                                   /* the sound's own name for it */
@@ -1583,8 +1591,10 @@ static void rt_draw_dly(void)
         rt_draw_centre();
     } else {                                                 /* at rest: the time, big; the feedback under it */
         const char *t = roto_dtime_name(rt_sn.dtime);
+        const char *dn = rt_sn.dbus == 2u ? "DELAY B" : rt_sn.dbus ? "DELAY A" : "NO DELAY";
         char fbs[12] = "FDBK ";
         uint32_t n = rt_strlen(t);
+        rt_text_s(RT_CX - RT_TEXT_S_W(dn) / 2, RT_CY - 32, dn, rt_sn.dbus ? RT_TRK_COL[rt_sn.sel] : RT_PINK);
         if (n > 4u) rt_text_b(RT_CX - (int32_t)n * 4, RT_CY - 10, t, 1, RT_TEXT);
         else rt_text_b(RT_CX - (int32_t)n * 8, RT_CY - 18, t, 2, RT_TEXT);
         rt_fmt_u(fbs + 5, rt_sn.dfdbk);
@@ -1594,6 +1604,7 @@ static void rt_draw_dly(void)
 
     {                                                        /* > terminal lines */
         char a[32] = "> ", b[32] = "> SEND ";
+        b[7] = rt_sn.dbus == 2u ? 'B' : rt_sn.dbus ? 'A' : '-'; b[8] = ' '; b[9] = 0;
         uint32_t n;
         const char *t = roto_dtime_name(rt_sn.dtime);
         for (n = 0; t[n]; n++) a[2 + n] = t[n];
@@ -1601,7 +1612,7 @@ static void rt_draw_dly(void)
         n = rt_strlen(a); a[n] = ' '; a[n + 1] = ' '; a[n + 2] = 'F'; a[n + 3] = 'D'; a[n + 4] = 'B'; a[n + 5] = 'K'; a[n + 6] = ' ';
         rt_fmt_u(a + n + 7, rt_sn.dfdbk);
         n = rt_strlen(a); a[n] = '%'; a[n + 1] = 0;
-        rt_fmt_u(b + 7, (rt_sn.dsend * 100u + 63u) / 127u);
+        rt_fmt_u(b + 9, (rt_sn.dsend * 100u + 63u) / 127u);
         n = rt_strlen(b); b[n] = '%'; b[n + 1] = ' '; b[n + 2] = ' '; b[n + 3] = 'C'; b[n + 4] = 'O'; b[n + 5] = 'L'; b[n + 6] = 'R'; b[n + 7] = ' ';
         rt_fmt_u(b + n + 8, (rt_sn.dcolor * 100u + 63u) / 127u);
         n = rt_strlen(b); b[n] = '%'; b[n + 1] = 0;
@@ -1859,7 +1870,7 @@ static uint32_t rt_ring_sig(void)
     if (rt_sn.show) { h = rt_fnv(h, rt_sn.gnum); h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); h = rt_fnv(h, rt_sn.div); h = rt_fnv(h, rt_sn.bpm); }
     else if (rt_sn.view == ROTO_VIEW_EUCLID) { h = rt_fnv(h, rt_sn.rot); h = rt_fnv(h, rt_sn.prob); }
     if (rt_sn.view == ROTO_VIEW_ENV) { uint32_t e; for (e = 0; e < 4u; e++) h = rt_fnv(h, rt_sn.env[e]); }
-    if (rt_sn.view == ROTO_VIEW_DLY) { h = rt_fnv(h, rt_sn.dtime); h = rt_fnv(h, rt_sn.dfdbk); h = rt_fnv(h, rt_sn.dcolor); h = rt_fnv(h, rt_sn.dsend); }
+    if (rt_sn.view == ROTO_VIEW_DLY) { h = rt_fnv(h, rt_sn.dtime); h = rt_fnv(h, rt_sn.dfdbk); h = rt_fnv(h, rt_sn.dcolor); h = rt_fnv(h, rt_sn.dsend); h = rt_fnv(h, rt_sn.dbus); }
     if (rt_sn.view == ROTO_VIEW_SND) {
         uint32_t e, c;
         h = rt_fnv(h, rt_sn.spage); h = rt_fnv(h, rt_sn.s_cat); h = rt_fnv(h, rt_sn.s_idx); h = rt_fnv(h, rt_sn.s_kit);

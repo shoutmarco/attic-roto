@@ -212,6 +212,11 @@ static voice_t *drum_reuse(track_t *t, uint32_t note)
 /* attic-roto: semitones on the next hits (a drum ring's ROLL PITCH; 0 otherwise), set around its note on */
 static int8_t drum_st_add;
 static uint8_t drum_cut_lanes[NTRK];                     /* attic-roto: lanes to cut, a bit each (drum_cut) */
+/* attic-roto: a drum ring's own delay. While drum_lsend_on, each lane sends drum_ls (0..127) of itself to delay A, or to
+ * B (its bit in drum_lb), into drum_sa / drum_sb (cleared and read by fx.c mix_part, on the core that renders the
+ * part); the part's own SEND is then not used */
+static uint8_t drum_lsend_on[NTRK], drum_ls[NTRK][DV_NLANE], drum_lb[NTRK];
+static int32_t drum_sa[NTRK][CTL], drum_sb[NTRK][CTL];
 
 static void drum_note_on(track_t *t, voice_t *v)
 {
@@ -321,11 +326,19 @@ static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
         g = 4096 + drv * 3 * 4096 / 127;
         mk = (int32_t)((19661u << 15) / (uint32_t)softclip((19661 * g) >> 12));
     }
-    for (i = 0; i < n; i++) {                            /* x1.25 and the knee below, in 32 bits */
-        int32_t s = y[i];
-        if (g)
-            s = (softclip((s * g) >> 12) * mk) >> 15;
-        out[i] += voice_amp(soft_knee(s + (s >> 2), 24000), m, i) << 1;
+    {
+        uint32_t ti = (uint32_t)(t - trk), ln = (uint32_t)v->s[0] & (DV_NLANE - 1u);
+        int32_t gs = ti < NTRK && drum_lsend_on[ti] ? drum_ls[ti][ln] * 258 : 0;
+        int32_t *sd = gs ? ((drum_lb[ti] >> ln) & 1u ? drum_sb[ti] : drum_sa[ti]) : 0;
+        for (i = 0; i < n; i++) {                        /* x1.25 and the knee below, in 32 bits */
+            int32_t s = y[i], o;
+            if (g)
+                s = (softclip((s * g) >> 12) * mk) >> 15;
+            o = voice_amp(soft_knee(s + (s >> 2), 24000), m, i) << 1;
+            out[i] += o;
+            if (sd)
+                sd[i] += mulq15(o, gs);                  /* (attic-roto: this lane's own delay send) */
+        }
     }
 }
 
