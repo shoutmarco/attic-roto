@@ -1556,6 +1556,7 @@ static uint32_t ri_slot(uint32_t eng, uint32_t e)
     return e;
 }
 
+static uint8_t ri_play_used;                          /* attic-roto: SELECT turned while PLAY is held (the tempo) */
 static void ri_pct(char *b, uint32_t v)               /* attic-roto: "57%" */
 {
     uint32_t i = 0;
@@ -1980,10 +1981,36 @@ static void ui_input(void)
             }
         }
         if ((v = panel_enc(EN_SELECT)) != 0) {
-            int32_t bpm = clamp((int32_t)roto.bpm + v, 40, 240);
-            roto.bpm = (uint8_t)bpm;
-            song.g[G_BPM] = (int16_t)bpm;              /* (the delay follows the tempo) */
-            roto_ui_show(ROTO_SHOW_BPM, fm1_ms);
+            if ((fm1_in.buttons >> panel.btn[B_PLAY]) & 1u) {   /* PLAY held + SELECT: the tempo (PLAY then does not start / stop) */
+                int32_t bpm = clamp((int32_t)roto.bpm + v, 40, 240);
+                roto.bpm = (uint8_t)bpm;
+                song.g[G_BPM] = (int16_t)bpm;          /* (the delay follows the tempo) */
+                ri_play_used = 1;
+                roto_ui_show(ROTO_SHOW_BPM, fm1_ms);
+            } else {                                   /* SELECT: MORPH, the selected ring's sound through its shapes */
+                static const uint8_t MORPH_E[14] = {2, 0xFF, 2, 2, 4, 0, 7, 2, 1, 1, 2, 1, 2, 2};
+                static const char *const MORPH_N[14] = {"MIX", "", "DCW", "DUTY", "CUT", "VOWEL", "PW", "BODY", "POS",
+                                                        "STRC", "TONE", "COLR", "MLVL", "START"};
+                uint32_t part = roto.trk[roto.sel < ROTO_TRACKS ? roto.sel : 0u].part, eng, e;
+                if (part < NTRK) {
+                    track_t *tk = &trk[part];
+                    char b[6], l[12] = "MORPH ";
+                    uint32_t c;
+                    eng = tk->eng_req < 14u ? tk->eng_req : 1u;
+                    e = MORPH_E[eng];
+                    if (e < 8u && ENGINES[tk->eng_req % NENGINES]->edit[e].max > ENGINES[tk->eng_req % NENGINES]->edit[e].min) {
+                        const param_desc_t *pd = &ENGINES[tk->eng_req % NENGINES]->edit[e];
+                        int32_t span = pd->max - pd->min, step = span / 64;
+                        tk->p[P_E0 + e] = (int16_t)clamp(tk->p[P_E0 + e] + v * (step ? step : 1), pd->min, pd->max);
+                        ri_pct(b, (uint32_t)(((tk->p[P_E0 + e] - pd->min) * 100) / span));
+                        for (c = 0; MORPH_N[eng][c] && c < 5u; c++) l[6 + c] = MORPH_N[eng][c];
+                        l[6 + c] = 0;
+                        roto_ui_say(b, l, fm1_ms);
+                    } else {
+                        roto_ui_say("-", "MORPH", fm1_ms);
+                    }
+                }
+            }
         }
         if ((v = panel_enc(EN_ALGO)) != 0) {
             roto.sel = (uint8_t)(((int32_t)roto.sel + v % ROTO_TRACKS + ROTO_TRACKS) % ROTO_TRACKS);
@@ -2129,8 +2156,14 @@ static void ui_input(void)
     if (roto.kpage && roto.trk[roto.sel].len <= 16u) roto.kpage = 0;
 
     /* attic-roto: transport buttons */
-    if (pressed & (1u << panel.btn[B_PLAY])) {
-        if (roto.running) roto_stop(); else roto_play();
+    {   /* PLAY: start / stop when it is let go (held with SELECT turned: the tempo, no start / stop) */
+        static uint8_t play_was;
+        uint8_t play_now = (uint8_t)((fm1_in.buttons >> panel.btn[B_PLAY]) & 1u);
+        if (pressed & (1u << panel.btn[B_PLAY])) ri_play_used = 0;
+        if (play_was && !play_now && !ri_play_used) {
+            if (roto.running) roto_stop(); else roto_play();
+        }
+        play_was = play_now;
     }
 
     if (roto_ui_input(pressed, notes, fm1_in.notes)) return;            /* attic-roto: ring sequencer input (owns HOME/PLAY/SEQ/keys) */
