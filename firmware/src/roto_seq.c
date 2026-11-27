@@ -726,6 +726,28 @@ static void evolve_once(void)
     (void)s;                                                 /* (the rest: nothing this time) */
 }
 
+/* -------- MORPH (the SELECT dial): one setting of each kind of sound, the one that changes its shape most */
+static const uint8_t MORPH_E[14] = {2, 0xFF, 2, 2, 4, 0, 7, 2, 1, 1, 2, 1, 2, 2};
+static const char *const MORPH_N[14] = {"MIX", "", "DCW", "DUTY", "CUT", "VOWEL", "PW", "BODY", "POS",
+                                        "STRC", "TONE", "COLR", "MLVL", "START"};
+/* part's MORPH: its setting (0..7, or -1 none), its % now, the picture (0 a wave bending, 1 a pulse), its name */
+int roto_morph_info(uint32_t part, uint32_t *pct, uint32_t *family, const char **name)
+{
+    uint32_t eng, e;
+    const param_desc_t *pd;
+    *pct = 0; *family = 0; *name = "-";
+    if (part >= NTRK) return -1;
+    eng = trk[part].eng_req < 14u ? trk[part].eng_req : 1u;
+    e = MORPH_E[eng];
+    *family = eng == 3u || eng == 6u ? 1u : 0u;              /* (LOFI DUTY, TRIO PW: a pulse) */
+    if (e >= 8u) return -1;
+    pd = &ENGINES[trk[part].eng_req % NENGINES]->edit[e];
+    if (pd->max <= pd->min) return -1;
+    *name = MORPH_N[eng];
+    *pct = (uint32_t)clamp(((trk[part].p[P_E0 + e] - pd->min) * 100) / (pd->max - pd->min), 0, 100);
+    return (int)e;
+}
+
 /* -------- the two delays (fx.c): each ring sends to A, to B or to none, by its own amount. A drum ring's
  * hits send by their lanes (rings 1, 5 and 6 share one kit: each its own lanes) */
 void roto_delay_from_sounds(void)

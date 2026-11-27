@@ -1988,27 +1988,17 @@ static void ui_input(void)
                 ri_play_used = 1;
                 roto_ui_show(ROTO_SHOW_BPM, fm1_ms);
             } else {                                   /* SELECT: MORPH, the selected ring's sound through its shapes */
-                static const uint8_t MORPH_E[14] = {2, 0xFF, 2, 2, 4, 0, 7, 2, 1, 1, 2, 1, 2, 2};
-                static const char *const MORPH_N[14] = {"MIX", "", "DCW", "DUTY", "CUT", "VOWEL", "PW", "BODY", "POS",
-                                                        "STRC", "TONE", "COLR", "MLVL", "START"};
-                uint32_t part = roto.trk[roto.sel < ROTO_TRACKS ? roto.sel : 0u].part, eng, e;
-                if (part < NTRK) {
+                uint32_t part = roto.trk[roto.sel < ROTO_TRACKS ? roto.sel : 0u].part, pct, fam;
+                const char *nm;
+                int e = roto_morph_info(part, &pct, &fam, &nm);
+                if (e >= 0) {
                     track_t *tk = &trk[part];
-                    char b[6], l[12] = "MORPH ";
-                    uint32_t c;
-                    eng = tk->eng_req < 14u ? tk->eng_req : 1u;
-                    e = MORPH_E[eng];
-                    if (e < 8u && ENGINES[tk->eng_req % NENGINES]->edit[e].max > ENGINES[tk->eng_req % NENGINES]->edit[e].min) {
-                        const param_desc_t *pd = &ENGINES[tk->eng_req % NENGINES]->edit[e];
-                        int32_t span = pd->max - pd->min, step = span / 64;
-                        tk->p[P_E0 + e] = (int16_t)clamp(tk->p[P_E0 + e] + v * (step ? step : 1), pd->min, pd->max);
-                        roto_ui_morph((uint32_t)(((tk->p[P_E0 + e] - pd->min) * 100) / span), MORPH_N[eng],
-                                      eng == 3u || eng == 6u ? 1u : 0u, fm1_ms);   /* (LOFI DUTY, TRIO PW: a pulse) */
-                    } else {
-                        roto_ui_morph(0, "-", 0, fm1_ms);
-                    }
-                    (void)b; (void)l; (void)c;
+                    const param_desc_t *pd = &ENGINES[tk->eng_req % NENGINES]->edit[e];
+                    int32_t span = pd->max - pd->min, step = span / 64;
+                    tk->p[P_E0 + e] = (int16_t)clamp(tk->p[P_E0 + e] + v * (step ? step : 1), pd->min, pd->max);
+                    roto_morph_info(part, &pct, &fam, &nm);
                 }
+                roto_ui_morph(pct, nm, fam, fm1_ms);
             }
         }
         if ((v = panel_enc(EN_ALGO)) != 0) {
@@ -2031,7 +2021,7 @@ static void ui_input(void)
                 gn_t = fm1_ms | 1u;
                 if (roto.view != ROTO_VIEW_RING && roto.view != ROTO_VIEW_EUCLID) roto.view = ROTO_VIEW_RING;
                 roto_ui_show(ROTO_SHOW_GNUM, fm1_ms);
-            } else if (gn_t && fm1_ms - gn_t >= 450u) {
+            } else if (gn_t && (int32_t)(fm1_ms - gn_t) >= 450) {   /* (gn_t may be 1 ms ahead: | 1) */
                 uint32_t t0 = fm1_ms, t, view = roto.view, sel2b = roto.sel, n = roto.gnum, mute = roto.mute;
                 int busy = 1;
                 gn_t = 0;
@@ -2121,7 +2111,7 @@ static void ui_input(void)
         if ((fm1_in.buttons >> panel.btn[B_HOME]) & 1u) {
             uint32_t held;
             if (!home_t0) home_t0 = fm1_ms | 1u;
-            held = fm1_ms - home_t0;
+            held = (int32_t)(fm1_ms - home_t0) > 0 ? fm1_ms - home_t0 : 0u;   /* (home_t0 may be 1 ms ahead: | 1) */
             if (!home_fired && held >= 2000u) {
                 uint32_t t0 = fm1_ms, t;
                 int busy = 1;

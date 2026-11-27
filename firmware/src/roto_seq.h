@@ -214,7 +214,8 @@ const char *roto_dtime_name(uint32_t t);
 uint32_t roto_dtime_96(uint32_t t);
 uint32_t roto_dtime_step(uint32_t t, int32_t dir);
 void roto_delay_from_sounds(void);   /* every ring into delay A at its sound's send, B as A (a groove, an older save) */
-void roto_delay_apply(void);         /* (UI side, every pass) the rings' delays to the audio side */
+void roto_delay_apply(void);
+int roto_morph_info(uint32_t part, uint32_t *pct, uint32_t *family, const char **name);   /* MORPH: its setting (-1 none), %, picture, name */         /* (UI side, every pass) the rings' delays to the audio side */
 
 /* SOUND: the sounds by kind. Pitched: categories of (engine, preset); drums: kits and pieces. */
 #define ROTO_ENG_DRUM 10u
