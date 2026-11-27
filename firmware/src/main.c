@@ -290,6 +290,7 @@ static void fm1_main(void)
     master_boot();
     kb_boot_hold = 1;                         /* #137: no notes from the keys before the UI (seq.c keyboard_block) */
 #if FELUCCA_CPU2
+    if (ROTO_CPU2_DEFAULT) ui_prefs2 |= (uint8_t)(PREF_CPU2_ON >> 16);   /* attic-roto: on at every power-on (roto_seq.h) */
     if (!bootguard.failed && (ui_prefs2 & (PREF_CPU2_ON >> 16))) {
         /* the second core (felucca-bsp chip/fm1_cpu1.h; fx.c mix_block hands it parts), at power-on, before the
          * audio and the timers (started later it never reaches its entry). It starts in the chip's ROM: fm1_cpu1_start

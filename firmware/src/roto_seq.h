@@ -35,6 +35,10 @@ typedef char roto_step_is_3_bytes[sizeof(roto_step_t) == 3u ? 1 : -1];
  * the key, K2 ACCENT, K3 LENGTH, K4 OCTAVE). ROTO_SIMPLE 1: one screen only (K1 SOUND, K2 TONE, K3 SPACE,
  * K4 SWING; SEQ held + K1 the length; the other screens off). Marco: all the screens, full sound editing (0) */
 #define ROTO_HOLD_EDIT 1
+/* the second core renders the sound (Felucca 1.6.1's, built in, OFF by default there): ON at every power-on in
+ * attic-roto (its MENU is not reachable here). Felucca's own guards stay: a crash in the first 30 s of the last boot,
+ * or core 1 misreading / not answering, and it is one core again (main.c). 0: one core, as before */
+#define ROTO_CPU2_DEFAULT 1
 #define ROTO_SIMPLE 0
 
 typedef struct {

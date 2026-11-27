@@ -1719,9 +1719,14 @@ int roto_ui_splash_frame(int32_t prev, int32_t t)
     {
         char v[12];
         uint32_t s;
+        const char *cores = "1 CORE";
+#if defined(FM1_CPU1) && FM1_CPU1
+        if (fm1_cpu1_on) cores = "2 CORES";                 /* (the second core started and answers) */
+#endif
         for (s = 0; s < 11u && ROTO_VERSION[s]; s++) v[s] = (char)(ROTO_VERSION[s] >= 'a' && ROTO_VERSION[s] <= 'z' ? ROTO_VERSION[s] - 32 : ROTO_VERSION[s]);
         v[s] = 0;
-        rt_text_s(RT_CX - RT_TEXT_S_W(v) / 2, 214, v, RT_RGB(110, 110, 110));
+        rt_text_s(RT_CX - RT_TEXT_S_W(v) / 2, 208, v, RT_RGB(110, 110, 110));
+        rt_text_s(RT_CX - RT_TEXT_S_W(cores) / 2, 220, cores, RT_RGB(110, 110, 110));
     }
     return 1;
 }
