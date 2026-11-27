@@ -204,17 +204,17 @@ static void reference_groove(uint32_t i)
 #include "roto_presets.h"
 
 /* one of Marco's three presets (roto_presets.h): groove 1's setup (its sounds, sends and delay), then the preset's
- * hits on rings 1 (kick), 5 (hats) and 6 (percussion), the other rings empty; its tempo, swing 50, nothing random,
+ * hits on rings 1 (kick), 2 (bass), 5 (hats) and 6 (percussion), the other rings empty; its tempo, swing 50, nothing random,
  * no EVOLVE, no dub throws. As the session's check played them (scratchpad p3/rend.c) */
-static void preset_ring(roto_track_t *k, const uint8_t *v)
+static void preset_ring(roto_track_t *k, const uint8_t *v, const uint8_t *notes, int direct)
 {
     uint32_t s;
     for (s = 0; s < ROTO_STEPS; s++) {
         roto_step_t *st = &k->step[s];
         uint32_t x = s < 32u ? v[s] : 0u;
         st->on = x > 0u;
-        st->note = k->fill_note;
-        st->vel = (uint8_t)(x ? 40u + x * 87u / 127u : 0u);
+        st->note = notes && s < 32u && notes[s] ? notes[s] : k->fill_note;
+        st->vel = (uint8_t)(!x ? 0u : direct ? (x > 127u ? 127u : x) : 40u + x * 87u / 127u);
         st->chance = 0; st->len_lo = 0; st->len_hi = 0;
     }
     k->len = 32; k->div = 1; k->arp = 0; k->lag = 0; k->prob = 100;
@@ -230,9 +230,10 @@ static void preset_groove(uint32_t i)
     roto.swing = 50; roto.evolve = 0; roto.grand = 0; roto.gprob = 100; roto.dub = 0;
     for (t = 0; t < ROTO_TRACKS; t++)
         for (s = 0; s < ROTO_STEPS; s++) { roto.trk[t].step[s].on = 0; roto.trk[t].home[s].on = 0; }
-    preset_ring(&roto.trk[0], p->kick);
-    preset_ring(&roto.trk[4], p->hat);
-    preset_ring(&roto.trk[5], p->perc);
+    preset_ring(&roto.trk[0], p->kick, 0, p->direct);
+    preset_ring(&roto.trk[1], p->bass, p->bnote, 1);         /* (the bass: ring 2, empty when it has none) */
+    preset_ring(&roto.trk[4], p->hat, 0, p->direct);
+    preset_ring(&roto.trk[5], p->perc, 0, p->direct);
     for (t = 0; t < ROTO_TRACKS; t++) home_save(&roto.trk[t]);
 }
 

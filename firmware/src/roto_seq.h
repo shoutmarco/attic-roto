@@ -15,7 +15,7 @@
 
 #define ROTO_TRACKS  6    /* rings */
 #define ROTO_PARTS   4    /* the synth's sounds: rings 1-4 play their own, ring 5 the drums, ring 6 the blips */
-#define ROTO_GROOVES 3u      /* PRESETS dials through Marco's three presets (roto_presets.h): 1 ORIN V2, 2 FACTORY V1,
+#define ROTO_GROOVES 3u      /* PRESETS dials through Marco's three presets (roto_presets.h): 1 ORIN, 2 FACTORY V1,
                                 3 FACTORY V2. (roto_seq_generate's other seeds still make the old generated grooves.) */
 #define ROTO_STEPS  32    /* max steps per ring (32: memory; the patterns use up to 16) */
 #define ROTO_CHORD   3    /* extra chord notes per step */
