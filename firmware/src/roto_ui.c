@@ -281,6 +281,9 @@ static struct {
     char ed_txt[8][7];
 } rt_sn;
 
+static uint32_t rt_morph_until;
+static uint8_t rt_morph_pct, rt_morph_fam;
+static char rt_morph_what[8];
 static void rt_snapshot(void)
 {
     const roto_track_t *k = &roto.trk[roto.sel < ROTO_TRACKS ? roto.sel : 0];
@@ -290,7 +293,8 @@ static void rt_snapshot(void)
     rt_sn.pos = k->pos < rt_sn.len ? k->pos : 0;
     rt_sn.div = k->div;
     rt_sn.bpm = roto.bpm;
-    rt_sn.view = roto.view;
+    rt_sn.view = rt_morph_until && (int32_t)(rt_morph_until - fm1_ms) > 0 ? ROTO_VIEW_MORPH : roto.view;
+    if (rt_sn.view != ROTO_VIEW_MORPH) rt_morph_until = 0;
     rt_sn.rot = k->rot;
     rt_sn.prob = k->prob;
     rt_sn.part = (uint8_t)(k->part < ROTO_PARTS ? k->part : 0u);
@@ -973,6 +977,77 @@ static int32_t rt_bpm_angle(uint32_t bpm)
     return 512 + 24 + ((b - 60) * (512 - 48)) / 120;
 }
 
+/* MORPH: the GROOVE screen's dome, 0 .. 100 % round it; the needle the selected ring's MORPH; inside, its sound's
+ * shape bending as it turns (a wave pushed into a ramp, or a pulse narrowing); under it MORPH and what it moves */
+static void rt_draw_morph(void)
+{
+    int32_t x, y, x1, y1, a, i, px = 0, py = 0;
+    uint32_t m = rt_morph_pct;
+    uint16_t tc = RT_TRK_COL[rt_sn.sel];
+    char l[16];
+    rt_rect(RT_A_X, RT_RULE_Y + 6, RT_A_X + 1, RT_H - 6, RT_AD);
+    rt_hspan(6, RT_W - 6, RT_A_Y, RT_AM);
+    for (a = 512; a < 1024; a += 2) {                              /* the dome */
+        rt_apol(a, RT_A_R, &x, &y); rt_apol(a + 2, RT_A_R, &x1, &y1);
+        rt_aline(x, y, x1, y1, RT_AY);
+    }
+    rt_rect(RT_A_X - RT_A_R, RT_A_Y, RT_A_X - RT_A_R + 1, RT_A_BASE, RT_AY);
+    rt_rect(RT_A_X + RT_A_R, RT_A_Y, RT_A_X + RT_A_R + 1, RT_A_BASE, RT_AY);
+    rt_hspan(RT_A_X - RT_A_R, RT_A_X + RT_A_R + 1, RT_A_BASE, RT_AY);
+    for (i = 0; i <= 100; i += 10) {                               /* 0 .. 100 % round it */
+        a = 512 + 24 + (i * (512 - 48)) / 100;
+        rt_apol(a, RT_A_R + 2, &x, &y); rt_apol(a, RT_A_R + (i % 20 ? 5 : 8), &x1, &y1);
+        rt_aline(x, y, x1, y1, RT_AM);
+        if (i % 20 == 0 && i > 0 && i < 100) {
+            char t[4];
+            rt_fmt_u(t, (uint32_t)i);
+            rt_apol(a, RT_A_R + 16, &x, &y);
+            rt_text_s(x - RT_TEXT_S_W(t) / 2, y - 3, t, RT_AD);
+        }
+    }
+    for (i = 0; i <= 160; i += 2) {                                /* the shape, one cycle across the dome */
+        int32_t ph = (i * 1024) / 160, v;                          /* (the cycle 0 .. 1024) */
+        if (rt_morph_fam == 1u) {                                  /* a pulse: high for less of the cycle */
+            int32_t duty = 512 - (int32_t)(m * 440u) / 100;
+            v = ph < duty ? 9000 : -9000;
+        } else {                                                   /* a wave bent: the rise squeezed, sine to ramp */
+            int32_t d = 512 - (int32_t)(m * 470u) / 100, q;
+            q = ph < d ? (ph * 512) / d : 512 + ((ph - d) * 512) / (1024 - d);
+            v = rt_sin(q - 256) * 9 / 16;
+        }
+        x = RT_A_X - 80 + i;
+        y = 112 - v / 360;
+        if (i) rt_aline(px, py, x, y, (i & 2) ? tc : RT_TEXT);
+        px = x; py = y;
+    }
+    {   /* the needle: MORPH */
+        int32_t dx, dy, bx, by, qx, qy, x0, y0;
+        a = 512 + 24 + (int32_t)((m * (512u - 48u)) / 100u);
+        rt_apol(a, RT_A_R - 14, &x, &y);
+        dx = x - RT_A_X; dy = y - RT_A_Y;
+        bx = RT_A_X + (dx * 80) / 90; by = RT_A_Y + (dy * 80) / 90;
+        qx = (-dy * 5) / 90; qy = (dx * 5) / 90;
+        x0 = RT_A_X + (dx * 12) / 90; y0 = RT_A_Y + (dy * 12) / 90;
+        rt_aline(x0, y0, bx + qx, by + qy, RT_AY);
+        rt_aline(x0, y0, bx - qx, by - qy, RT_AY);
+        rt_aline(bx + qx, by + qy, bx - qx, by - qy, RT_AY);
+        rt_rect(x - 6, y - 6, x + 7, y + 7, RT_BG);
+        rt_ring_at(x, y, 6, RT_AY);
+        rt_rect(x - 2, y - 2, x + 3, y + 3, RT_AY);
+    }
+    rt_ring_at(RT_A_X, RT_A_Y, 11, RT_AY);
+    rt_rect(16, 199, 224, 200, RT_AD);                             /* the amount, a bar */
+    rt_rect(16, 197, 16 + (int32_t)(m * 208u / 100u), 202, tc);
+    rt_text_b(16, 212, "MORPH", 1, tc);
+    {
+        uint32_t k = 0, j;
+        for (j = 0; rt_morph_what[j]; j++) l[k++] = rt_morph_what[j];
+        l[k++] = ' ';
+        rt_fmt_u(l + k, m); k = rt_strlen(l); l[k] = '%'; l[k + 1] = 0;
+        rt_text_b(224 - (int32_t)rt_strlen(l) * 8, 212, l, 1, RT_TEXT);
+    }
+}
+
 static void rt_draw_grv(void)
 {
     /* K1 SWING (orange ticks), K2 RANDOM (pink scatter), K3 PROB (cyan arcs: their dashes
@@ -1628,6 +1703,7 @@ static void rt_draw_scene(void)
     else if (rt_sn.view == ROTO_VIEW_FLT) rt_draw_flt();
     else if (rt_sn.view == ROTO_VIEW_DLY) rt_draw_dly();
     else if (rt_sn.view == ROTO_VIEW_GRV) rt_draw_grv();
+    else if (rt_sn.view == ROTO_VIEW_MORPH) rt_draw_morph();
     else if (rt_sn.view == ROTO_VIEW_ARP) rt_draw_arp();
     else if (rt_sn.view == ROTO_VIEW_GLO) rt_draw_glo();
     else if (rt_sn.view == ROTO_VIEW_SND) rt_draw_snd();
@@ -1790,6 +1866,17 @@ void roto_ui_show(uint32_t what, uint32_t now_ms)
     rt_show_until = now_ms + RT_SHOW_MS;
 }
 
+/* MORPH (the SELECT dial): its screen for 1.5 s after the last turn, over whichever screen is open */
+void roto_ui_morph(uint32_t pct, const char *what, uint32_t family, uint32_t now_ms)
+{
+    uint32_t i;
+    rt_morph_pct = (uint8_t)(pct > 100u ? 100u : pct);
+    rt_morph_fam = (uint8_t)family;
+    for (i = 0; i < 7u && what[i]; i++) rt_morph_what[i] = what[i];
+    rt_morph_what[i] = 0;
+    rt_morph_until = (now_ms + 1500u) | 1u;
+}
+
 void roto_ui_say(const char *big, const char *small, uint32_t now_ms)
 {
     uint32_t i;
@@ -1889,6 +1976,7 @@ static uint32_t rt_ring_sig(void)
         for (j = 0; j < rt_sn.a_n; j++) h = rt_fnv(h, rt_sn.a_notes[j]);
     }
     if (rt_sn.view == ROTO_VIEW_GLO) { h = rt_fnv(h, (uint8_t)rt_sn.o_pitch); h = rt_fnv(h, (uint8_t)rt_sn.o_bright); h = rt_fnv(h, rt_sn.o_echo); h = rt_fnv(h, rt_sn.o_len); h = rt_fnv(h, rt_sn.o_drum); h = rt_fnv(h, rt_sn.o_level); }
+    if (rt_sn.view == ROTO_VIEW_MORPH) { h = rt_fnv(h, rt_morph_pct); h = rt_fnv(h, rt_morph_fam); h = rt_fnv(h, (uint8_t)rt_morph_what[0]); h = rt_fnv(h, (uint8_t)rt_morph_what[1]); }
     if (rt_sn.view == ROTO_VIEW_GRV) { h = rt_fnv(h, rt_sn.bpm); h = rt_fnv(h, rt_sn.g_swing); h = rt_fnv(h, rt_sn.g_evolve); h = rt_fnv(h, rt_sn.g_dub); h = rt_fnv(h, rt_sn.g_rand); h = rt_fnv(h, rt_sn.g_prob); }
     if (rt_sn.view == ROTO_VIEW_FLT) { uint32_t e, c; for (e = 0; e < 4u; e++) { h = rt_fnv(h, (uint8_t)rt_sn.flt[e]); for (c = 0; rt_sn.flt_lbl[e][c]; c++) h = rt_fnv(h, (uint8_t)rt_sn.flt_lbl[e][c]); } }
     for (s = 0; s < rt_sn.len; s++)
@@ -1938,7 +2026,7 @@ int roto_ui_draw(int force, uint32_t now_ms)
             rt_repaint_rows(0, RT_HEAD_Y1);             /* the header only (K4) */
         else if (rt_sn.bpm != rt_shown_bpm && rt_sn.view == ROTO_VIEW_RING)
             rt_repaint(RT_BPM_X1 - 50, 4, RT_BPM_X1 + 1, 17);
-        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos && rt_sn.view != ROTO_VIEW_ENV && rt_sn.view != ROTO_VIEW_FLT && rt_sn.view != ROTO_VIEW_DLY && rt_sn.view != ROTO_VIEW_GRV && rt_sn.view != ROTO_VIEW_SND && rt_sn.view != ROTO_VIEW_ARP && rt_sn.view != ROTO_VIEW_GLO) {
+        if (ring == rt_shown_ring && rt_sn.pos != rt_shown_pos && rt_sn.view != ROTO_VIEW_ENV && rt_sn.view != ROTO_VIEW_FLT && rt_sn.view != ROTO_VIEW_DLY && rt_sn.view != ROTO_VIEW_GRV && rt_sn.view != ROTO_VIEW_MORPH && rt_sn.view != ROTO_VIEW_SND && rt_sn.view != ROTO_VIEW_ARP && rt_sn.view != ROTO_VIEW_GLO) {
             int32_t x0, y0, x1, y1;
             rt_playhead_box(rt_shown_pos < rt_sn.len ? rt_shown_pos : 0, rt_sn.len, &x0, &y0, &x1, &y1);
             rt_repaint(x0, y0, x1, y1);

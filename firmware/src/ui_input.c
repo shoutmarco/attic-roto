@@ -2002,13 +2002,12 @@ static void ui_input(void)
                         const param_desc_t *pd = &ENGINES[tk->eng_req % NENGINES]->edit[e];
                         int32_t span = pd->max - pd->min, step = span / 64;
                         tk->p[P_E0 + e] = (int16_t)clamp(tk->p[P_E0 + e] + v * (step ? step : 1), pd->min, pd->max);
-                        ri_pct(b, (uint32_t)(((tk->p[P_E0 + e] - pd->min) * 100) / span));
-                        for (c = 0; MORPH_N[eng][c] && c < 5u; c++) l[6 + c] = MORPH_N[eng][c];
-                        l[6 + c] = 0;
-                        roto_ui_say(b, l, fm1_ms);
+                        roto_ui_morph((uint32_t)(((tk->p[P_E0 + e] - pd->min) * 100) / span), MORPH_N[eng],
+                                      eng == 3u || eng == 6u ? 1u : 0u, fm1_ms);   /* (LOFI DUTY, TRIO PW: a pulse) */
                     } else {
-                        roto_ui_say("-", "MORPH", fm1_ms);
+                        roto_ui_morph(0, "-", 0, fm1_ms);
                     }
+                    (void)b; (void)l; (void)c;
                 }
             }
         }

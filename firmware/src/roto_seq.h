@@ -162,6 +162,7 @@ typedef struct {
 #define ROTO_ARP_RHYTHMS 10
 const char *roto_arp_rhythm_name(uint32_t r);
 #define ROTO_VIEW_SND    6
+#define ROTO_VIEW_MORPH 9   /* (drawn only) MORPH: shown for a moment while the SELECT dial turns */
 
 /* what a knob just changed, for roto_ui_show() (the centre shows it for a moment) */
 enum { ROTO_SHOW_NONE, ROTO_SHOW_LENGTH, ROTO_SHOW_FILL, ROTO_SHOW_ROTATE, ROTO_SHOW_RATE, ROTO_SHOW_PROB, ROTO_SHOW_BPM,
@@ -281,6 +282,7 @@ int  roto_ui_draw(int force, uint32_t now_ms);   /* returns 1 if the screen is o
 void roto_ui_show(uint32_t what, uint32_t now_ms);   /* a knob turned: show its value in the centre for a moment */
 void roto_ui_audio_level(uint8_t level);
 void roto_ui_say(const char *big, const char *small, uint32_t now_ms);   /* the centre: these words for a moment */
+void roto_ui_morph(uint32_t pct, const char *what, uint32_t family, uint32_t now_ms);   /* SELECT turned: the MORPH screen for a moment (family 0 a wave bending, 1 a pulse narrowing) */
 int roto_ui_held_step(void);                  /* the step whose white key is held (the selected ring), or -1 */
 void roto_ui_hold_used(void);                 /* the held step was edited: letting go keeps it */
 void roto_ui_say_step(uint32_t now_ms);       /* the centre: the held step's note, accent, length */
